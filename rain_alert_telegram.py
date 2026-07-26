@@ -50,8 +50,8 @@ except ImportError:
 #  ห้าม commit TOKEN จริงขึ้น GitHub เด็ดขาด ใครเห็นก็ยิงข้อความในนามบอทคุณได้
 # =====================================================================
 
-TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "8445798616:AAFfkV44XIRa5Rxcgrjz7ah5WJ8h0gJE4Vc")
-TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "805315744")
+TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "TELEGRAM_TOKEN")
+TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "ใส่_TOKEN_ของบอทตรงนี้")
 
 # พิกัดบ้าน/ไซต์งาน (บางปะกง ฉะเชิงเทรา)
 LAT = float(os.environ.get("WX_LAT", 13.53))
