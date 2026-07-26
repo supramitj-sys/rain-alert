@@ -1,0 +1,68 @@
+# =====================================================================
+#  แจ้งเตือนฝน บางปะกง — รันบนเซิร์ฟเวอร์ GitHub ฟรี ไม่ต้องเปิดคอม
+# ---------------------------------------------------------------------
+#  ไฟล์นี้ต้องวางไว้ที่:  .github/workflows/rain-alert.yml
+#  (ต้องมีจุดนำหน้า .github และต้องอยู่ในโฟลเดอร์ workflows)
+# =====================================================================
+
+name: แจ้งเตือนฝน บางปะกง
+
+on:
+  schedule:
+    # รันทุกชั่วโมง — เวลาใน cron ของ GitHub เป็น UTC เสมอ
+    # แต่สคริปต์แปลงเป็นเวลาไทยเองแล้ว จึงไม่ต้องชดเชยตรงนี้
+    - cron: '0 * * * *'
+
+  # ปุ่มกดรันเองสำหรับทดสอบ (อยู่ในแท็บ Actions)
+  workflow_dispatch:
+
+# กันไม่ให้รันซ้อนกันถ้ารอบก่อนยังไม่จบ
+concurrency:
+  group: rain-alert
+  cancel-in-progress: false
+
+jobs:
+  check-rain:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: ดึงโค้ดจาก repo
+        uses: actions/checkout@v4
+
+      - name: ติดตั้ง Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: ติดตั้งไลบรารีที่ต้องใช้
+        run: pip install requests pillow
+
+      # ---------------------------------------------------------------
+      #  เครื่องของ GitHub Actions เป็นเครื่องใหม่ทุกรอบ ไฟล์ที่เขียนไว้
+      #  รอบก่อนจะหายหมด ระบบกันเตือนซ้ำ (cooldown) จึงต้องอาศัย cache
+      #  ช่วยเก็บไฟล์ state ข้ามรอบ ไม่งั้นจะเตือนซ้ำทุกชั่วโมง
+      # ---------------------------------------------------------------
+      - name: กู้ไฟล์ state รอบก่อน (สำหรับกันเตือนซ้ำ)
+        uses: actions/cache/restore@v4
+        with:
+          path: rain_alert_state.json
+          key: rain-state-${{ github.run_id }}
+          restore-keys: |
+            rain-state-
+
+      - name: เช็คสภาพอากาศและแจ้งเตือน
+        env:
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          WX_LAT: '13.53'
+          WX_LON: '100.99'
+          WX_PLACE: 'บางปะกง'
+        run: python rain_alert_telegram.py
+
+      - name: บันทึกไฟล์ state ไว้ใช้รอบหน้า
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: rain_alert_state.json
+          key: rain-state-${{ github.run_id }}
