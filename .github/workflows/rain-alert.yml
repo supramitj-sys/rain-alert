@@ -32,10 +32,10 @@ jobs:
 
     steps:
       - name: ดึงโค้ดจาก repo
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: ติดตั้ง Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.12'
 
@@ -48,7 +48,7 @@ jobs:
       #  ช่วยเก็บไฟล์ state ข้ามรอบ ไม่งั้นจะเตือนซ้ำทุกชั่วโมง
       # ---------------------------------------------------------------
       - name: กู้ไฟล์ state รอบก่อน (สำหรับกันเตือนซ้ำ)
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v5
         with:
           path: rain_alert_state.json
           key: rain-state-${{ github.run_id }}
@@ -66,7 +66,7 @@ jobs:
 
       - name: บันทึกไฟล์ state ไว้ใช้รอบหน้า
         if: always()
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v5
         with:
           path: rain_alert_state.json
           key: rain-state-${{ github.run_id }}
