@@ -16,6 +16,10 @@ on:
   # ปุ่มกดรันเองสำหรับทดสอบ (อยู่ในแท็บ Actions)
   workflow_dispatch:
 
+# ต้องมีสิทธิ์เขียน เพื่อบันทึกไฟล์ประวัติการเตือนกลับเข้า repo
+permissions:
+  contents: write
+
 # กันไม่ให้รันซ้อนกันถ้ารอบก่อนยังไม่จบ
 concurrency:
   group: rain-alert
@@ -66,3 +70,33 @@ jobs:
         with:
           path: rain_alert_state.json
           key: rain-state-${{ github.run_id }}
+
+      # ---------------------------------------------------------------
+      #  บันทึกประวัติการเตือนกลับเข้า repo
+      # ---------------------------------------------------------------
+      #  ทำไมต้อง commit ไม่ใช้ cache เหมือน state:
+      #  ไฟล์นี้มีช่อง "ฝนตกจริง (Y/N)" ที่คุณต้องกรอกเอง ถ้าเก็บใน cache
+      #  จะแก้ไม่ได้เลย แต่ถ้า commit เข้า repo จะกดแก้ผ่านเว็บ GitHub ได้
+      #  แล้วเปิดดูสถิติย้อนหลังว่าระบบเตือนแม่นกี่ %
+      # ---------------------------------------------------------------
+      - name: บันทึกประวัติการเตือนเข้า repo
+        if: always()
+        run: |
+          if [ ! -f alert_log.csv ]; then
+            echo "ไม่มีรายการใหม่ ข้ามขั้นตอนนี้"
+            exit 0
+          fi
+
+          git config user.name  "rain-alert-bot"
+          git config user.email "actions@github.com"
+
+          # ดึงของใหม่ก่อน เผื่อคุณเพิ่งแก้ไฟล์ผ่านเว็บ จะได้ไม่ชนกัน
+          git pull --rebase --autostash origin ${{ github.ref_name }} || true
+
+          git add alert_log.csv
+          if git diff --staged --quiet; then
+            echo "ไม่มีอะไรเปลี่ยน"
+          else
+            git commit -m "log: บันทึกการเตือน $(date -u -d '+7 hours' '+%Y-%m-%d %H:%M') น."
+            git push origin HEAD:${{ github.ref_name }}
+          fi
