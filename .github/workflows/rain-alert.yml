@@ -1,1 +1,103 @@
+# =====================================================================
+#  แจ้งเตือนฝน บางปะกง — รันบนเซิร์ฟเวอร์ GitHub ฟรี ไม่ต้องเปิดคอม
+# ---------------------------------------------------------------------
+#  ไฟล์นี้ต้องวางไว้ที่:  .github/workflows/rain-alert.yml
+#  (ต้องมีจุดนำหน้า .github และต้องอยู่ในโฟลเดอร์ workflows)
+# =====================================================================
 
+name: แจ้งเตือนฝน บางปะกง
+
+on:
+  schedule:
+    # รันทุกชั่วโมง — เวลาใน cron ของ GitHub เป็น UTC เสมอ
+    # แต่สคริปต์แปลงเป็นเวลาไทยเองแล้ว จึงไม่ต้องชดเชยตรงนี้
+    - cron: '0 * * * *'
+
+  # ปุ่มกดรันเองสำหรับทดสอบ (อยู่ในแท็บ Actions)
+  workflow_dispatch:
+
+# ต้องมีสิทธิ์เขียน เพื่อบันทึกไฟล์ประวัติการเตือนกลับเข้า repo
+permissions:
+  contents: write
+
+# กันไม่ให้รันซ้อนกันถ้ารอบก่อนยังไม่จบ
+concurrency:
+  group: rain-alert
+  cancel-in-progress: false
+
+jobs:
+  check-rain:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: ดึงโค้ดจาก repo
+        uses: actions/checkout@v5
+
+      - name: ติดตั้ง Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: ติดตั้งไลบรารีที่ต้องใช้
+        run: pip install requests pillow
+
+      # ---------------------------------------------------------------
+      #  เครื่องของ GitHub Actions เป็นเครื่องใหม่ทุกรอบ ไฟล์ที่เขียนไว้
+      #  รอบก่อนจะหายหมด ระบบกันเตือนซ้ำ (cooldown) จึงต้องอาศัย cache
+      #  ช่วยเก็บไฟล์ state ข้ามรอบ ไม่งั้นจะเตือนซ้ำทุกชั่วโมง
+      # ---------------------------------------------------------------
+      - name: กู้ไฟล์ state รอบก่อน (สำหรับกันเตือนซ้ำ)
+        uses: actions/cache/restore@v5
+        with:
+          path: rain_alert_state.json
+          key: rain-state-${{ github.run_id }}
+          restore-keys: |
+            rain-state-
+
+      - name: เช็คสภาพอากาศและแจ้งเตือน
+        env:
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          TMD_TOKEN: ${{ secrets.TMD_TOKEN }}
+          WX_LAT: '13.53'
+          WX_LON: '100.99'
+          WX_PLACE: 'บางปะกง'
+        run: python rain_alert_telegram.py
+
+      - name: บันทึกไฟล์ state ไว้ใช้รอบหน้า
+        if: always()
+        uses: actions/cache/save@v5
+        with:
+          path: rain_alert_state.json
+          key: rain-state-${{ github.run_id }}
+
+      # ---------------------------------------------------------------
+      #  บันทึกประวัติการเตือนกลับเข้า repo
+      # ---------------------------------------------------------------
+      #  ทำไมต้อง commit ไม่ใช้ cache เหมือน state:
+      #  ไฟล์นี้มีช่อง "ฝนตกจริง (Y/N)" ที่คุณต้องกรอกเอง ถ้าเก็บใน cache
+      #  จะแก้ไม่ได้เลย แต่ถ้า commit เข้า repo จะกดแก้ผ่านเว็บ GitHub ได้
+      #  แล้วเปิดดูสถิติย้อนหลังว่าระบบเตือนแม่นกี่ %
+      # ---------------------------------------------------------------
+      - name: บันทึกประวัติการเตือนเข้า repo
+        if: always()
+        run: |
+          if [ ! -f alert_log.csv ]; then
+            echo "ไม่มีรายการใหม่ ข้ามขั้นตอนนี้"
+            exit 0
+          fi
+
+          git config user.name  "rain-alert-bot"
+          git config user.email "actions@github.com"
+
+          # ดึงของใหม่ก่อน เผื่อคุณเพิ่งแก้ไฟล์ผ่านเว็บ จะได้ไม่ชนกัน
+          git pull --rebase --autostash origin ${{ github.ref_name }} || true
+
+          git add alert_log.csv
+          if git diff --staged --quiet; then
+            echo "ไม่มีอะไรเปลี่ยน"
+          else
+            git commit -m "log: บันทึกการเตือน $(date -u -d '+7 hours' '+%Y-%m-%d %H:%M') น."
+            git push origin HEAD:${{ github.ref_name }}
+          fi

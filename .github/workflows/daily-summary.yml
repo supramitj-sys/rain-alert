@@ -1,0 +1,40 @@
+# =====================================================================
+#  สรุปพยากรณ์ประจำวัน บางปะกง — ส่งทุกเช้า 6 โมง เวลาไทย
+# ---------------------------------------------------------------------
+#  ไฟล์นี้ต้องวางไว้ที่:  .github/workflows/daily-summary.yml
+#  ใช้สคริปต์ตัวเดียวกัน แต่สั่งด้วย --force ให้ส่งข้อความเสมอ
+#  แม้ไม่มีฝน (จะได้รู้ทุกเช้าว่าวันนี้อากาศเป็นยังไง)
+# =====================================================================
+
+name: สรุปอากาศประจำวัน บางปะกง
+
+on:
+  schedule:
+    # 23:00 UTC = 06:00 เวลาไทย (UTC+7) ของวันถัดไป
+    - cron: '0 23 * * *'
+  workflow_dispatch:
+
+jobs:
+  daily-summary:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - run: pip install requests pillow
+
+      - name: ส่งสรุปประจำวัน
+        env:
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          TMD_TOKEN: ${{ secrets.TMD_TOKEN }}
+          WX_LAT: '13.53'
+          WX_LON: '100.99'
+          WX_PLACE: 'บางปะกง'
+        # --force = ส่งเสมอ ไม่สนใจ cooldown และไม่สนใจว่ามีฝนหรือไม่
+        run: python rain_alert_telegram.py --force
