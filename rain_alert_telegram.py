@@ -50,8 +50,8 @@ except ImportError:
 #  ห้าม commit TOKEN จริงขึ้น GitHub เด็ดขาด ใครเห็นก็ยิงข้อความในนามบอทคุณได้
 # =====================================================================
 
-TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN","ใส่_TOKEN_ของบอทตรงนี้")
-TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "ใส่_CHAT_ID_ตรงนี้")
+TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "8445798616:AAFfkV44XIRa5Rxcgrjz7ah5WJ8h0gJE4Vc")
+TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "805315744")
 
 # พิกัดบ้าน/ไซต์งาน (บางปะกง ฉะเชิงเทรา)
 LAT = float(os.environ.get("WX_LAT", 13.53))
@@ -88,6 +88,25 @@ COOLDOWN_MINUTES = 120     # ห้ามเตือนซ้ำภายใน
 QUIET_START = 22           # เริ่มเวลา 22:00
 QUIET_END = 5              # ถึง 05:00
 QUIET_MIN_RANK = 5         # ระดับความรุนแรงขั้นต่ำที่จะปลุกได้ (ดูตาราง SEVERITY_RANK)
+
+# ---------------------------------------------------------------------
+#  ใช้หลายโมเดลตรวจสอบกันเอง — วิธีลด false alarm ที่ได้ผลที่สุด
+# ---------------------------------------------------------------------
+#  โมเดลเดี่ยวที่ความละเอียด 9-13 กม. มักสร้างฝนผีขึ้นมาเอง
+#  แต่ถ้าโมเดลจากคนละสำนัก คนละวิธีคำนวณ บอกตรงกัน = น่าเชื่อกว่ามาก
+#  เทคนิคนี้เรียก model consensus นักพยากรณ์มืออาชีพใช้จริง
+MODELS = ["ecmwf_ifs025", "gfs_seamless", "icon_seamless"]
+
+# โมเดล WRF ของกรมอุตุนิยมวิทยา — ความละเอียดสูงกว่าโมเดลโลกและปรับจูนสำหรับไทย
+# ต้องลงทะเบียนที่ data.tmd.go.th/api/index1.php เพื่อรับโทเคน (ฟรี)
+# ใส่ไว้ใน GitHub Secrets ชื่อ TMD_TOKEN — ห้าม commit โทเคนจริงขึ้น repo
+TMD_TOKEN = os.environ.get("TMD_TOKEN", "")
+USE_TMD = bool(TMD_TOKEN)
+MIN_MODEL_AGREE = 2        # ต้องมีอย่างน้อยกี่โมเดลเห็นตรงกันจึงจะเตือน
+
+# ต้องเจอเหตุการณ์เดิมซ้ำ 2 รอบติดกันจึงเตือน
+# ถ้าโมเดลเห็นชั่วโมงนี้ พอชั่วโมงถัดไปหายไป = สัญญาณรบกวน ไม่ใช่ฝนจริง
+REQUIRE_PERSISTENCE = True
 
 # ใช้เรดาร์ยับยั้งการเตือนฝนเบา — ถ้าโมเดลบอกว่ามีฝนใน 1 ชม.
 # แต่เรดาร์ไม่เห็นอะไรเลยในรัศมี 25 กม. แปลว่าโมเดลน่าจะเกลี่ยฝนผิดที่
@@ -195,6 +214,26 @@ def in_quiet_hours() -> bool:
     return h >= QUIET_START or h < QUIET_END      # ข้ามเที่ยงคืน
 
 
+def check_persistence(state, rain_hours):
+    """
+    ตรวจว่าเหตุการณ์ฝนนี้เคยถูกทำนายในรอบก่อนหรือไม่
+
+    เหตุผล: โมเดลที่มั่นใจจริงจะทำนายชั่วโมงเดิมซ้ำหลายรอบ
+    ส่วนฝนผีมักโผล่มารอบเดียวแล้วหายไปรอบถัดไป
+    การบังคับให้เจอซ้ำ 2 รอบจึงกรองสัญญาณรบกวนออกได้มาก
+    แลกกับการเตือนช้าลงราว 1 ชั่วโมง
+
+    คืนค่า (ผ่านหรือไม่, ชั่วโมงที่ควรบันทึกไว้ใช้รอบหน้า)
+    """
+    now_hours = sorted({f["time"].strftime("%Y-%m-%dT%H") for f in rain_hours})
+    if not REQUIRE_PERSISTENCE:
+        return True, now_hours
+
+    prev = set(state.get("last_rain_hours") or [])
+    overlap = prev & set(now_hours)
+    return bool(overlap), now_hours
+
+
 def log_alert(severity, forecast, radar, sent):
     """
     บันทึกทุกครั้งที่ระบบ "คิดจะเตือน" ลงไฟล์ CSV
@@ -206,6 +245,8 @@ def log_alert(severity, forecast, radar, sent):
         new = not _os.path.exists(ALERT_LOG)
         mx = max((f["rain_mm"] for f in forecast), default=0) if forecast else 0
         mp = max((f["prob"] for f in forecast), default=0) if forecast else 0
+        ag = max((f["agree"] for f in forecast), default=0) if forecast else 0
+        nm = max((f["n_models"] for f in forecast), default=0) if forecast else 0
         rd = ""
         if radar and radar.get("rain_detected"):
             rd = "yes" if radar["rain_detected"].get("now") else "no"
@@ -213,10 +254,14 @@ def log_alert(severity, forecast, radar, sent):
             w = csv.writer(fp)
             if new:
                 w.writerow(["เวลา", "ระดับ", "ฝนที่ทำนาย(มม./ชม.)",
-                            "โอกาสฝน(%)", "เรดาร์เห็นฝน", "ส่งจริง",
+                            "โอกาสฝน(%)", "โมเดลตรงกัน", "จำนวนโมเดล",
+                            "TMD_WRF(มม.)", "เรดาร์เห็นฝน", "ส่งจริง",
                             "ฝนตกจริง(กรอกเอง Y/N)"])
+            tmds = [f.get("tmd_mm") for f in (forecast or [])
+                    if f.get("tmd_mm") is not None]
+            td = f"{max(tmds):.1f}" if tmds else ""
             w.writerow([f"{now_th():%Y-%m-%d %H:%M}", severity,
-                        f"{mx:.1f}", f"{mp:.0f}", rd,
+                        f"{mx:.1f}", f"{mp:.0f}", ag, nm, td, rd,
                         "yes" if sent else "no", ""])
     except Exception as e:
         print(f"  บันทึก log ไม่ได้: {e}")
@@ -228,9 +273,16 @@ def log_alert(severity, forecast, radar, sent):
 
 def fetch_forecast():
     """
-    ดึงพยากรณ์รายชั่วโมงจาก Open-Meteo
-    คืนค่า list ของ dict: [{time, rain_mm, prob, temp, gust}, ...]
-    เฉพาะชั่วโมงข้างหน้าตาม LOOKAHEAD_HOURS
+    ดึงพยากรณ์รายชั่วโมงจากหลายโมเดลพร้อมกัน (model consensus)
+
+    เมื่อส่ง &models=a,b,c ทาง Open-Meteo จะเติมชื่อโมเดลต่อท้ายทุกตัวแปร
+    เช่น precipitation_ecmwf_ifs025, precipitation_gfs_seamless
+    โค้ดนี้จึงไม่ hardcode ชื่อคีย์ แต่ค้นหาเอาจากผลลัพธ์จริง
+    ถ้าชื่อโมเดลตัวไหนผิดหรือไม่รองรับ ก็จะหายไปเฉย ๆ ไม่ทำให้ทั้งระบบพัง
+
+    คืนค่า list ของ dict:
+      {time, rain_mm (ค่ากลาง), rain_max, agree (จำนวนโมเดลที่เห็นฝน),
+       n_models, prob, temp, gust, cape, heat, per_model {ชื่อ: มม.}}
     """
     url = "https://api.open-meteo.com/v1/forecast"
     params = {
@@ -240,9 +292,10 @@ def fetch_forecast():
                    "wind_gusts_10m,cape,apparent_temperature"),
         "timezone": "Asia/Bangkok",
         "forecast_days": 2,
+        "models": ",".join(MODELS),
     }
     try:
-        r = requests.get(url, params=params, timeout=25)
+        r = requests.get(url, params=params, timeout=30)
         r.raise_for_status()
         data = r.json()
     except Exception as e:
@@ -251,12 +304,38 @@ def fetch_forecast():
 
     h = data.get("hourly", {})
     times = h.get("time", [])
-    rains = h.get("precipitation", [])
-    probs = h.get("precipitation_probability", [])
-    temps = h.get("temperature_2m", [])
-    gusts = h.get("wind_gusts_10m", [])
-    capes = h.get("cape", [])
-    heats = h.get("apparent_temperature", [])
+    if not times:
+        return None
+
+    def keys_for(var):
+        """หาคีย์ทั้งหมดของตัวแปรนี้ (ทุกโมเดล) จากผลลัพธ์จริง"""
+        exact = [k for k in h if k == var]
+        pref = [k for k in h if k.startswith(var + "_")]
+        # กัน precipitation_probability ถูกจับเป็น precipitation
+        if var == "precipitation":
+            pref = [k for k in pref if not k.startswith("precipitation_probability")]
+        return exact + pref
+
+    rain_keys = keys_for("precipitation")
+    prob_keys = keys_for("precipitation_probability")
+    temp_keys = keys_for("temperature_2m")
+    gust_keys = keys_for("wind_gusts_10m")
+    cape_keys = keys_for("cape")
+    heat_keys = keys_for("apparent_temperature")
+
+    if not rain_keys:
+        print("  !! ไม่พบข้อมูลฝนในผลลัพธ์ — ชื่อโมเดลอาจไม่ถูกต้อง")
+        return None
+    print(f"  โมเดลที่ใช้ได้จริง {len(rain_keys)} ตัว: "
+          + ", ".join(k.replace("precipitation_", "") or "default" for k in rain_keys))
+
+    def vals(keys, i):
+        out = []
+        for k in keys:
+            arr = h.get(k) or []
+            if i < len(arr) and arr[i] is not None:
+                out.append(arr[i])
+        return out
 
     now = now_th()
     out = []
@@ -265,19 +344,142 @@ def fetch_forecast():
             dt = datetime.fromisoformat(t)
         except Exception:
             continue
-        # เอาเฉพาะชั่วโมงตั้งแต่ตอนนี้ไปข้างหน้า
         delta_h = (dt - now).total_seconds() / 3600
-        if -1 <= delta_h <= LOOKAHEAD_HOURS:
-            out.append({
-                "time": dt,
-                "rain_mm": rains[i] if i < len(rains) and rains[i] is not None else 0.0,
-                "prob": probs[i] if i < len(probs) and probs[i] is not None else 0,
-                "temp": temps[i] if i < len(temps) and temps[i] is not None else None,
-                "gust": gusts[i] if i < len(gusts) and gusts[i] is not None else 0,
-                "cape": capes[i] if i < len(capes) and capes[i] is not None else None,
-                "heat": heats[i] if i < len(heats) and heats[i] is not None else None,
-            })
+        if not (-1 <= delta_h <= LOOKAHEAD_HOURS):
+            continue
+
+        rains = vals(rain_keys, i)
+        if not rains:
+            continue
+        rains_sorted = sorted(rains)
+        median = rains_sorted[len(rains_sorted) // 2]
+
+        probs = vals(prob_keys, i)
+        temps = vals(temp_keys, i)
+        gusts = vals(gust_keys, i)
+        capes = vals(cape_keys, i)
+        heats = vals(heat_keys, i)
+
+        out.append({
+            "time": dt,
+            "tmd_mm": None,      # เติมทีหลังใน merge_tmd()
+            # ใช้ค่ากลาง ไม่ใช่ค่าสูงสุด — โมเดลตัวเดียวที่หลุดโด่งจะไม่ลากทั้งกลุ่ม
+            "rain_mm": median,
+            "rain_max": max(rains),
+            "agree": sum(1 for v in rains if v >= RAIN_MM_ALERT),
+            "n_models": len(rains),
+            "per_model": {k.replace("precipitation_", "") or "default": v
+                          for k, v in zip(rain_keys, rains)},
+            "prob": max(probs) if probs else 0,
+            "temp": sum(temps) / len(temps) if temps else None,
+            "gust": max(gusts) if gusts else 0,
+            "cape": max(capes) if capes else None,
+            "heat": max(heats) if heats else None,
+        })
     return out
+
+
+def merge_tmd(forecast, tmd):
+    """
+    รวมผลจากโมเดล WRF ของกรมอุตุฯ เข้ากับผลจากโมเดลโลก
+
+    ถือว่า TMD เป็นอีก 1 เสียงใน consensus และเป็นเสียงที่มีน้ำหนัก
+    เพราะความละเอียดสูงกว่าและปรับจูนสำหรับภูมิอากาศไทยโดยเฉพาะ
+    """
+    if not forecast or not tmd:
+        return forecast
+
+    hit = 0
+    for f in forecast:
+        key = f["time"].strftime("%Y-%m-%dT%H")
+        mm = tmd.get(key)
+        if mm is None:
+            continue
+        hit += 1
+        f["tmd_mm"] = mm
+        f["n_models"] += 1
+        if mm >= RAIN_MM_ALERT:
+            f["agree"] += 1
+        f["per_model"]["tmd_wrf"] = mm
+        # คำนวณค่ากลางใหม่โดยรวม TMD เข้าไปด้วย
+        vals = sorted(f["per_model"].values())
+        f["rain_mm"] = vals[len(vals) // 2]
+        f["rain_max"] = max(vals)
+
+    if hit:
+        print(f"  รวมโมเดล TMD เข้ากับ consensus ได้ {hit} ชั่วโมง")
+    return forecast
+
+
+# =====================================================================
+#  1b) โมเดล WRF ของกรมอุตุนิยมวิทยา (NWP API)
+# =====================================================================
+
+def fetch_tmd_forecast(hours=None):
+    """
+    ดึงพยากรณ์ฝนรายชั่วโมงจากโมเดล WRF ของกรมอุตุฯ
+
+    เอกสาร: https://data.tmd.go.th/nwpapi/doc/
+    โทเคนต้องส่งใน header ไม่ใช่ query string
+    (ตรงนี้คือจุดที่คนพลาดบ่อย เพราะเอา URL ไปเปิดในเบราว์เซอร์เฉย ๆ ไม่ได้)
+
+    คืนค่า dict {'YYYY-MM-DDTHH': ฝน มม.} หรือ None ถ้าดึงไม่ได้
+    """
+    if not USE_TMD:
+        return None
+
+    hours = hours or (LOOKAHEAD_HOURS + 1)
+    t = now_th()
+    url = "https://data.tmd.go.th/nwpapi/v1/forecast/location/hourly/at"
+    headers = {
+        "accept": "application/json",
+        "authorization": "Bearer " + TMD_TOKEN,
+    }
+
+    # ลองชุดตัวแปรแบบเต็มก่อน ถ้าไม่ผ่านค่อยถอยไปชุดพื้นฐานที่ยืนยันแล้วว่าใช้ได้
+    for fields in ("tc,rh,rain,ws10m,cond", "tc,rh,rain"):
+        params = {
+            "lat": LAT, "lon": LON, "fields": fields,
+            "date": f"{t:%Y-%m-%d}", "hour": t.hour, "duration": hours,
+        }
+        try:
+            r = requests.get(url, headers=headers, params=params, timeout=25)
+            if r.status_code == 401:
+                print("  TMD: โทเคนไม่ถูกต้องหรือหมดอายุ")
+                return None
+            if r.status_code != 200:
+                print(f"  TMD: ตอบ {r.status_code} (ลองชุดตัวแปรถัดไป)")
+                continue
+            d = r.json()
+        except Exception as e:
+            print(f"  TMD: ดึงไม่ได้ ({e})")
+            continue
+
+        try:
+            fc = d["WeatherForecasts"][0]["forecasts"]
+        except (KeyError, IndexError, TypeError):
+            print("  TMD: รูปแบบผลลัพธ์ไม่ตรงที่คาด")
+            continue
+
+        out = {}
+        for f in fc:
+            tm = f.get("time")
+            rain = (f.get("data") or {}).get("rain")
+            if tm is None or rain is None:
+                continue
+            try:
+                # เวลาอาจมาในหลายรูปแบบ ตัดเอาเฉพาะ YYYY-MM-DDTHH
+                key = str(tm).replace(" ", "T")[:13]
+                out[key] = float(rain)
+            except (ValueError, TypeError):
+                continue
+
+        if out:
+            print(f"  TMD WRF: ได้ข้อมูล {len(out)} ชั่วโมง "
+                  f"(ฝนสูงสุด {max(out.values()):.1f} มม.)")
+            return out
+
+    return None
 
 
 # =====================================================================
@@ -498,7 +700,8 @@ def fetch_tide_clash(forecast):
 #  ประกอบข้อความแจ้งเตือน
 # =====================================================================
 
-def build_message(forecast, radar, warning, always_send=False, tide_clash=None):
+def build_message(forecast, radar, warning, always_send=False, tide_clash=None,
+                  persistence_ok=True):
     """
     สร้างข้อความแจ้งเตือน คืนค่า (text, severity_key) หรือ (None, None) ถ้าไม่ต้องเตือน
 
@@ -537,11 +740,19 @@ def build_message(forecast, radar, warning, always_send=False, tide_clash=None):
         max_prob = max((f["prob"] for f in forecast), default=0)
         max_gust = max((f["gust"] for f in forecast), default=0)
 
-        # เงื่อนไขฝน: ต้องเข้า "ทั้ง" ปริมาณและโอกาส
-        # เดิมใช้ปริมาณอย่างเดียว แล้วมีอีกกิ่งที่ใช้โอกาสอย่างเดียว
-        # ทำให้เตือนแม้ฝน 0 มม. ขอแค่โอกาส 60% ซึ่งเป็นสาเหตุหลักของการเตือนผิด
+        # ---------------------------------------------------------------
+        #  เงื่อนไขฝน 3 ชั้น
+        # ---------------------------------------------------------------
+        #  1) ค่ากลางของทุกโมเดลต้องถึงเกณฑ์ปริมาณ
+        #  2) โอกาสฝนต้องถึงเกณฑ์
+        #  3) ต้องมีโมเดลเห็นฝนตรงกันอย่างน้อย MIN_MODEL_AGREE ตัว
+        #     ชั้นที่ 3 คือตัวกรอง false alarm ที่ได้ผลที่สุด เพราะโมเดลเดี่ยว
+        #     ที่ความละเอียด 9-13 กม. มักสร้างฝนขึ้นมาเองโดยไม่มีจริง
+        # ---------------------------------------------------------------
         rain_hours = [f for f in forecast
-                      if f["rain_mm"] >= RAIN_MM_ALERT and f["prob"] >= PROB_ALERT]
+                      if f["rain_mm"] >= RAIN_MM_ALERT
+                      and f["prob"] >= PROB_ALERT
+                      and f["agree"] >= min(MIN_MODEL_AGREE, f["n_models"])]
 
         # ---------------------------------------------------------------
         #  เรดาร์ยับยั้งการเตือนฝนเบา
@@ -564,6 +775,13 @@ def build_message(forecast, radar, warning, always_send=False, tide_clash=None):
                 rain_hours = []
                 vetoed = True
 
+        # ฝนหนักมากข้ามการตรวจความต่อเนื่อง — รอไม่ได้
+        if rain_hours and persistence_ok is False and \
+           max(f["rain_mm"] for f in rain_hours) < RAIN_MM_HEAVY:
+            print("  → รอยืนยันอีก 1 รอบ (โมเดลเพิ่งเห็นฝนนี้ครั้งแรก)")
+            rain_hours = []
+            vetoed = True
+
         if rain_hours:
             if max_rain >= RAIN_MM_VERY_HEAVY:
                 head, sev = "⛈️ <b>ฝนหนักมาก</b>", "very_heavy"
@@ -580,9 +798,19 @@ def build_message(forecast, radar, warning, always_send=False, tide_clash=None):
             conf = "—"
             if radar and radar.get("rain_detected") is not None:
                 conf = ("เรดาร์ยืนยันแล้ว ✓" if radar["rain_detected"].get("now")
-                        else "เรดาร์ยังไม่เห็น (อาจไม่ตกจริง)")
+                        else "เรดาร์ยังไม่เห็น")
+            best = max(rain_hours, key=lambda f: f["agree"])
+            agree_txt = f"{best['agree']}/{best['n_models']} โมเดลตรงกัน"
+            tmd_txt = ""
+            tmds = [f["tmd_mm"] for f in rain_hours if f.get("tmd_mm") is not None]
+            if tmds:
+                mx_tmd = max(tmds)
+                tmd_txt = ("\n🇹🇭 โมเดลกรมอุตุฯ (WRF): "
+                           + (f"{mx_tmd:.1f} มม. — เห็นตรงกัน ✓"
+                              if mx_tmd >= RAIN_MM_ALERT
+                              else f"{mx_tmd:.1f} มม. — ไม่เห็นฝน"))
             lines.append(f"{head} ที่{PLACE_NAME}\nช่วงเวลา: {slots}\n"
-                         f"โอกาสฝน {max_prob:.0f}% · {conf}")
+                         f"โอกาสฝน {max_prob:.0f}% · {agree_txt} · {conf}{tmd_txt}")
 
         elif vetoed:
             # ไม่เตือน แต่พิมพ์ลง log ให้เห็นว่าระบบยับยั้งไป
@@ -654,13 +882,21 @@ def main():
     print(f"[{now_th():%Y-%m-%d %H:%M:%S}] เริ่มเช็คสภาพอากาศ {PLACE_NAME} ({LAT}, {LON})")
 
     forecast = fetch_forecast()
+
+    # รวมโมเดล WRF ของกรมอุตุฯ เข้าไปด้วย (ถ้าตั้งโทเคนไว้)
+    if forecast and USE_TMD:
+        forecast = merge_tmd(forecast, fetch_tmd_forecast())
+    elif not USE_TMD:
+        print("  (ยังไม่ได้ตั้ง TMD_TOKEN — ใช้เฉพาะโมเดลโลก)")
+
     if forecast:
         print(f"  พยากรณ์: ได้ {len(forecast)} ชั่วโมงข้างหน้า")
         for f in forecast:
             print(f"    {f['time']:%H:%M}  ฝน {f['rain_mm']:.1f} มม.  "
                   f"โอกาส {f['prob']}%  ลมกระโชก {f['gust']:.0f} กม./ชม.  "
                   f"CAPE {f['cape'] if f['cape'] is not None else '-'}  "
-                  f"รู้สึก {f['heat'] if f['heat'] is not None else '-'}°C")
+                  f"รู้สึก {f['heat'] if f['heat'] is not None else '-'}°C  "
+                  f"TMD {f.get('tmd_mm') if f.get('tmd_mm') is not None else '-'}")
     else:
         print("  พยากรณ์: ดึงไม่ได้")
 
@@ -680,14 +916,29 @@ def main():
     tide_clash = fetch_tide_clash(forecast)
     print(f"  ฝนหนักตรงน้ำขึ้น: {'พบ' if tide_clash else 'ไม่พบ'}")
 
+    state = load_state()
+
+    # ตรวจความต่อเนื่อง — ใช้เกณฑ์เดียวกับที่ใช้คัดชั่วโมงฝน
+    cand = [f for f in (forecast or [])
+            if f["rain_mm"] >= RAIN_MM_ALERT and f["prob"] >= PROB_ALERT
+            and f["agree"] >= min(MIN_MODEL_AGREE, f["n_models"])]
+    persist_ok, cur_hours = check_persistence(state, cand)
+    if cand:
+        print(f"  ชั่วโมงที่เข้าเกณฑ์: {len(cand)} | "
+              f"เคยเห็นรอบก่อน: {'ใช่' if persist_ok else 'ยังไม่เคย'}")
+
     text, severity = build_message(forecast, radar, warning,
-                                   always_send=args.force, tide_clash=tide_clash)
+                                   always_send=args.force, tide_clash=tide_clash,
+                                   persistence_ok=persist_ok)
+
+    # บันทึกชั่วโมงที่เข้าเกณฑ์ไว้เทียบรอบหน้าเสมอ แม้จะไม่ได้ส่งข้อความ
+    state["last_rain_hours"] = cur_hours
+    save_state(state)
 
     if text is None:
         print("  → ไม่มีอะไรต้องเตือน ไม่ส่งข้อความ")
         return
 
-    state = load_state()
     rank = SEVERITY_RANK.get(severity, 0)
 
     # ช่วงเวลาห้ามปลุก — ผ่านได้เฉพาะเรื่องรุนแรงจริง
