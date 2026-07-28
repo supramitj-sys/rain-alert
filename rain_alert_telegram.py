@@ -104,6 +104,12 @@ TMD_TOKEN = os.environ.get("TMD_TOKEN", "")
 USE_TMD = bool(TMD_TOKEN)
 MIN_MODEL_AGREE = 2        # ต้องมีอย่างน้อยกี่โมเดลเห็นตรงกันจึงจะเตือน
 
+# --- ใช้ประโยชน์จากตัวแปรอื่นที่ TMD ให้มา นอกเหนือจากฝน ---
+# (อ้างอิง: https://data.tmd.go.th/nwpapi/doc/apidoc/location/forecast_hourly.html)
+TMD_PRESSURE_DROP_ALERT = 1.5   # hPa — ความกดอากาศลดลงเกินนี้ในช่วงที่ดึงมา
+                                 # = สัญญาณความกดอากาศต่ำ/พายุเข้าใกล้ มักมาก่อนโมเดลฝนจะเห็น
+TMD_CLOUD_DENSE = 70             # % — เมฆระดับต่ำเกินนี้ถือว่าหนาแน่น ใช้เสริมความมั่นใจของฝน
+
 # ต้องเจอเหตุการณ์เดิมซ้ำ 2 รอบติดกันจึงเตือน
 # ถ้าโมเดลเห็นชั่วโมงนี้ พอชั่วโมงถัดไปหายไป = สัญญาณรบกวน ไม่ใช่ฝนจริง
 REQUIRE_PERSISTENCE = True
@@ -119,7 +125,8 @@ ALERT_LOG = "alert_log.csv"   # บันทึกทุกการเตือ
 # ระดับความรุนแรง — ใช้ตัดสินว่าจะเตือนซ้ำหรือปลุกกลางดึกไหม
 SEVERITY_RANK = {
     "clear": 0, "heat": 2, "gust": 3, "rain": 3, "radar_now": 4,
-    "heavy": 5, "storm": 5, "very_heavy": 6, "tide": 6, "warning": 7,
+    "pressure": 4, "heavy": 5, "storm": 5, "very_heavy": 6, "tide": 6,
+    "warning": 7,
 }
 
 
@@ -212,6 +219,37 @@ def in_quiet_hours() -> bool:
     if QUIET_START <= QUIET_END:
         return QUIET_START <= h < QUIET_END
     return h >= QUIET_START or h < QUIET_END      # ข้ามเที่ยงคืน
+
+
+def wind_compass(deg):
+    """
+    แปลงองศาทิศทางลม (ตามที่ TMD ให้มา) เป็นสิ่งที่อ่านแล้วเห็นภาพทันที
+
+    หลักการ: ตัวเลขทิศทางลมทางอุตุนิยมวิทยาบอก "ทิศที่ลมพัดมาจาก" ไม่ใช่ทิศที่พัดไป
+    เช่น 0°/เหนือ = ลมพัดมาจากทิศเหนือ แล้ววิ่งลงไปทางใต้
+    ฟังก์ชันนี้จึงคืนทั้งป้ายกำกับ "มาจากทิศไหน" (คนอ่านเข้าใจง่ายสุด)
+    และลูกศรที่ชี้ไปทิศที่ลมกำลังพัดไปหา (ทิศตรงข้าม) ไว้แปะในข้อความให้เห็นภาพ
+
+    คืนค่า dict {from_th, from_code, arrow} หรือ None ถ้าไม่มีข้อมูล
+    """
+    if deg is None:
+        return None
+    deg = float(deg) % 360
+    idx = int((deg / 45) + 0.5) % 8
+    flow_idx = (idx + 4) % 8      # ทิศตรงข้าม = ทิศที่ลมพัดไปหา
+    names = ["เหนือ", "ตะวันออกเฉียงเหนือ", "ตะวันออก", "ตะวันออกเฉียงใต้",
+             "ใต้", "ตะวันตกเฉียงใต้", "ตะวันตก", "ตะวันตกเฉียงเหนือ"]
+    codes = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"]
+    arrows = ["⬆️", "↗️", "➡️", "↘️", "⬇️", "↙️", "⬅️", "↖️"]   # ชี้ไปทิศนั้น ๆ (เหนืออยู่บน)
+    return {"from_th": names[idx], "from_code": codes[idx], "arrow": arrows[flow_idx]}
+
+
+# รหัสสภาพอากาศจาก TMD (cond) — อ้างอิงเอกสาร nwpapi
+TMD_COND_TEXT = {
+    1: "ท้องฟ้าแจ่มใส", 2: "มีเมฆบางส่วน", 3: "เมฆเป็นส่วนมาก", 4: "มีเมฆมาก",
+    5: "ฝนตกเล็กน้อย", 6: "ฝนปานกลาง", 7: "ฝนตกหนัก", 8: "ฝนฟ้าคะนอง",
+    9: "อากาศหนาวจัด", 10: "อากาศหนาว", 11: "อากาศเย็น", 12: "อากาศร้อนจัด",
+}
 
 
 def check_persistence(state, rain_hours):
@@ -383,8 +421,9 @@ def merge_tmd(forecast, tmd):
     """
     รวมผลจากโมเดล WRF ของกรมอุตุฯ เข้ากับผลจากโมเดลโลก
 
-    ถือว่า TMD เป็นอีก 1 เสียงใน consensus และเป็นเสียงที่มีน้ำหนัก
-    เพราะความละเอียดสูงกว่าและปรับจูนสำหรับภูมิอากาศไทยโดยเฉพาะ
+    - ฝน: ถือเป็นอีก 1 เสียงใน consensus (น้ำหนักเพิ่มเพราะละเอียดกว่าและปรับจูนสำหรับไทย)
+    - อุณหภูมิ/ความชื้น/ลม(ความเร็ว+ทิศทาง)/ความกดอากาศ/รหัสสภาพอากาศ/เมฆ:
+      แนบไว้ที่ f['tmd'] เพื่อใช้เสริมข้อความแจ้งเตือน (ไม่ได้เอาไปโหวตร่วมกับฝน)
     """
     if not forecast or not tmd:
         return forecast
@@ -392,11 +431,13 @@ def merge_tmd(forecast, tmd):
     hit = 0
     for f in forecast:
         key = f["time"].strftime("%Y-%m-%dT%H")
-        mm = tmd.get(key)
-        if mm is None:
+        td = tmd.get(key)
+        if td is None:
             continue
         hit += 1
+        mm = td["rain"]
         f["tmd_mm"] = mm
+        f["tmd"] = td
         f["n_models"] += 1
         if mm >= RAIN_MM_ALERT:
             f["agree"] += 1
@@ -411,24 +452,49 @@ def merge_tmd(forecast, tmd):
     return forecast
 
 
+def tmd_pressure_trend(tmd):
+    """
+    เช็คแนวโน้มความกดอากาศ (slp) จากข้อมูล TMD ในช่วงที่ดึงมา
+
+    ความกดอากาศที่ลดลงเร็วมักเป็นสัญญาณล่วงหน้าของระบบความกดอากาศต่ำ/พายุ
+    ที่มาก่อนโมเดลฝนรายชั่วโมงจะทำนายฝนได้ทัน จึงใช้เป็นสัญญาณเตือนล่วงหน้าอีกชั้น
+
+    คืนค่า (delta_hpa, จำนวนชั่วโมงที่ครอบคลุม) หรือ (None, 0) ถ้าข้อมูลไม่พอ
+    """
+    if not tmd:
+        return None, 0
+    pts = [(k, v["slp"]) for k, v in tmd.items() if v.get("slp") is not None]
+    if len(pts) < 2:
+        return None, 0
+    pts.sort(key=lambda x: x[0])
+    delta = pts[-1][1] - pts[0][1]
+    return delta, len(pts) - 1
+
+
 # =====================================================================
 #  1b) โมเดล WRF ของกรมอุตุนิยมวิทยา (NWP API)
 # =====================================================================
 
 def fetch_tmd_forecast(hours=None):
     """
-    ดึงพยากรณ์ฝนรายชั่วโมงจากโมเดล WRF ของกรมอุตุฯ
+    ดึงพยากรณ์รายชั่วโมงจากโมเดล WRF ของกรมอุตุฯ — ดึงให้ครบทุกตัวที่มีประโยชน์
+    ไม่ใช่แค่ฝน แต่รวมอุณหภูมิ ความชื้น ลม(ความเร็ว+ทิศทาง) ความกดอากาศ
+    รหัสสภาพอากาศ (cond) และเมฆระดับต่ำ เพื่อใช้เสริมข้อความแจ้งเตือน
 
-    เอกสาร: https://data.tmd.go.th/nwpapi/doc/
+    เอกสาร: https://data.tmd.go.th/nwpapi/doc/apidoc/location/forecast_hourly.html
     โทเคนต้องส่งใน header ไม่ใช่ query string
     (ตรงนี้คือจุดที่คนพลาดบ่อย เพราะเอา URL ไปเปิดในเบราว์เซอร์เฉย ๆ ไม่ได้)
 
-    คืนค่า dict {'YYYY-MM-DDTHH': ฝน มม.} หรือ None ถ้าดึงไม่ได้
+    ดึงยาวกว่าที่ merge เข้ากับฝนเล็กน้อย (อย่างน้อย 6 ชม.) เพื่อให้เห็นแนวโน้ม
+    ความกดอากาศได้ชัดกว่าการดูแค่ช่วง LOOKAHEAD_HOURS
+
+    คืนค่า dict {'YYYY-MM-DDTHH': {rain, tc, rh, ws10m, wd10m, slp, cond, cloudlow}}
+    หรือ None ถ้าดึงไม่ได้
     """
     if not USE_TMD:
         return None
 
-    hours = hours or (LOOKAHEAD_HOURS + 1)
+    hours = hours or max(LOOKAHEAD_HOURS + 1, 6)
     t = now_th()
     url = "https://data.tmd.go.th/nwpapi/v1/forecast/location/hourly/at"
     headers = {
@@ -437,7 +503,12 @@ def fetch_tmd_forecast(hours=None):
     }
 
     # ลองชุดตัวแปรแบบเต็มก่อน ถ้าไม่ผ่านค่อยถอยไปชุดพื้นฐานที่ยืนยันแล้วว่าใช้ได้
-    for fields in ("tc,rh,rain,ws10m,cond", "tc,rh,rain"):
+    field_sets = (
+        "tc,rh,rain,ws10m,wd10m,slp,cond,cloudlow",
+        "tc,rh,rain,ws10m,wd10m,cond",
+        "tc,rh,rain",
+    )
+    for fields in field_sets:
         params = {
             "lat": LAT, "lon": LON, "fields": fields,
             "date": f"{t:%Y-%m-%d}", "hour": t.hour, "duration": hours,
@@ -464,19 +535,29 @@ def fetch_tmd_forecast(hours=None):
         out = {}
         for f in fc:
             tm = f.get("time")
-            rain = (f.get("data") or {}).get("rain")
+            data = f.get("data") or {}
+            rain = data.get("rain")
             if tm is None or rain is None:
                 continue
             try:
                 # เวลาอาจมาในหลายรูปแบบ ตัดเอาเฉพาะ YYYY-MM-DDTHH
                 key = str(tm).replace(" ", "T")[:13]
-                out[key] = float(rain)
+                out[key] = {
+                    "rain": float(rain),
+                    "tc": data.get("tc"),
+                    "rh": data.get("rh"),
+                    "ws10m": data.get("ws10m"),
+                    "wd10m": data.get("wd10m"),
+                    "slp": data.get("slp"),
+                    "cond": data.get("cond"),
+                    "cloudlow": data.get("cloudlow"),
+                }
             except (ValueError, TypeError):
                 continue
 
         if out:
-            print(f"  TMD WRF: ได้ข้อมูล {len(out)} ชั่วโมง "
-                  f"(ฝนสูงสุด {max(out.values()):.1f} มม.)")
+            print(f"  TMD WRF: ได้ข้อมูล {len(out)} ชั่วโมง (fields={fields}, "
+                  f"ฝนสูงสุด {max(v['rain'] for v in out.values()):.1f} มม.)")
             return out
 
     return None
@@ -701,12 +782,18 @@ def fetch_tide_clash(forecast):
 # =====================================================================
 
 def build_message(forecast, radar, warning, always_send=False, tide_clash=None,
-                  persistence_ok=True):
+                  persistence_ok=True, slp_delta=None, slp_span=0):
     """
     สร้างข้อความแจ้งเตือน คืนค่า (text, severity_key) หรือ (None, None) ถ้าไม่ต้องเตือน
 
     always_send=True  → ส่งข้อความเสมอแม้ไม่มีฝน (ใช้กับสรุปประจำวันตอนเช้า)
+    slp_delta/slp_span → แนวโน้มความกดอากาศจาก TMD (ดู tmd_pressure_trend())
     """
+
+    def _bump(sev, candidate):
+        """ยกระดับ severity เฉพาะเมื่อ candidate รุนแรงกว่าที่มีอยู่แล้วเท่านั้น
+        (กันไม่ให้สัญญาณที่มาทีหลังในโค้ดไปเบียดสัญญาณที่รุนแรงกว่าซึ่งเจอไปก่อนหน้า)"""
+        return candidate if SEVERITY_RANK.get(sev, 0) < SEVERITY_RANK.get(candidate, 0) else sev
     lines = []
     severity = None
     t_now = now_th().strftime("%H:%M")
@@ -809,12 +896,31 @@ def build_message(forecast, radar, warning, always_send=False, tide_clash=None,
                            + (f"{mx_tmd:.1f} มม. — เห็นตรงกัน ✓"
                               if mx_tmd >= RAIN_MM_ALERT
                               else f"{mx_tmd:.1f} มม. — ไม่เห็นฝน"))
+
+            # เมฆระดับต่ำจาก TMD — เสริมความมั่นใจว่าฝนจะตกจริง (นอกเหนือจากเรดาร์)
+            cloud_txt = ""
+            clouds = [f["tmd"]["cloudlow"] for f in rain_hours
+                      if f.get("tmd", {}).get("cloudlow") is not None]
+            if clouds and max(clouds) >= TMD_CLOUD_DENSE:
+                cloud_txt = f"\n☁️ เมฆระดับต่ำหนาแน่น {max(clouds):.0f}% (TMD) — เสริมความมั่นใจว่าฝนจะตกจริง"
+
             lines.append(f"{head} ที่{PLACE_NAME}\nช่วงเวลา: {slots}\n"
-                         f"โอกาสฝน {max_prob:.0f}% · {agree_txt} · {conf}{tmd_txt}")
+                         f"โอกาสฝน {max_prob:.0f}% · {agree_txt} · {conf}{tmd_txt}{cloud_txt}")
 
         elif vetoed:
             # ไม่เตือน แต่พิมพ์ลง log ให้เห็นว่าระบบยับยั้งไป
             print("  → เรดาร์ยับยั้งการเตือนฝนเบา (โมเดลว่ามี แต่เรดาร์ไม่เห็น)")
+
+        # --- รหัสสภาพอากาศจาก TMD (cond) — ฝนฟ้าคะนอง/ฝนหนัก ระบุชัดจากโมเดลไทยโดยตรง ---
+        cond_hours = [f for f in forecast if f.get("tmd", {}).get("cond") in (7, 8)]
+        if cond_hours:
+            worst = max(f["tmd"]["cond"] for f in cond_hours)
+            severity = _bump(severity, "storm" if worst == 8 else "heavy")
+            when = ", ".join(f["time"].strftime("%H:%M") for f in cond_hours[:3])
+            label = TMD_COND_TEXT.get(worst, str(worst))
+            icon = "⛈️" if worst == 8 else "🌧️"
+            lines.append(f"{icon} <b>TMD ระบุสภาพอากาศ: {label}</b> (cond={worst})\n"
+                         f"ช่วงเวลา: {when}")
 
         # --- ความเสี่ยงพายุฟ้าคะนอง (CAPE) ---
         capes = [f["cape"] for f in forecast if f["cape"] is not None]
@@ -832,6 +938,7 @@ def build_message(forecast, radar, warning, always_send=False, tide_clash=None,
                          f"เสี่ยงตะคริวและเพลียแดด — เพิ่มรอบพัก จัดน้ำดื่มและจุดพักในร่ม")
 
         # --- ลมกระโชก (สำคัญกับงานก่อสร้าง) ---
+        wind_hours = [f for f in forecast if f.get("tmd", {}).get("wd10m") is not None]
         if max_gust >= GUST_DANGER:
             severity = severity or "gust"
             lines.append(f"💨 <b>ลมกระโชกแรงมาก {max_gust:.0f} กม./ชม.</b>\n"
@@ -839,6 +946,25 @@ def build_message(forecast, radar, warning, always_send=False, tide_clash=None,
         elif max_gust >= GUST_ALERT:
             severity = severity or "gust"
             lines.append(f"💨 ลมกระโชก {max_gust:.0f} กม./ชม. — ระวังงานที่สูง นั่งร้าน ผ้าใบคลุม")
+
+        # --- ทิศทางลมจาก TMD (ถ้ามี) — บอกด้านที่ลมมาจริง ๆ ไว้กางผ้าใบ/ป้องกันให้ถูกด้าน ---
+        if max_gust >= GUST_ALERT and wind_hours:
+            wf = max(wind_hours, key=lambda f: f.get("tmd", {}).get("ws10m") or 0)
+            wc = wind_compass(wf["tmd"]["wd10m"])
+            if wc:
+                lines.append(
+                    f"🧭 ลมมาจากทิศ{wc['from_th']} ({wc['from_code']}) {wc['arrow']}\n"
+                    f"→ กางของ/ผูกผ้าใบด้านรับลมทิศ{wc['from_code']}ให้แน่นที่สุด"
+                )
+
+        # --- ความกดอากาศจาก TMD: สัญญาณเตือนล่วงหน้าก่อนโมเดลฝนจะฟันธง ---
+        if slp_delta is not None and slp_delta <= -TMD_PRESSURE_DROP_ALERT:
+            severity = _bump(severity, "pressure")
+            lines.append(
+                f"🇹🇭 <b>ความกดอากาศลดลง {abs(slp_delta):.1f} hPa ใน {slp_span} ชม.</b>\n"
+                f"สัญญาณเริ่มมีระบบความกดอากาศต่ำ/พายุเข้าใกล้ — จับตาต่อเนื่อง"
+                f" แม้โมเดลฝนยังไม่ฟันธง"
+            )
 
     # --- ไม่มีอะไรต้องเตือน ---
     if severity is None:
@@ -884,19 +1010,30 @@ def main():
     forecast = fetch_forecast()
 
     # รวมโมเดล WRF ของกรมอุตุฯ เข้าไปด้วย (ถ้าตั้งโทเคนไว้)
+    tmd_raw = None
     if forecast and USE_TMD:
-        forecast = merge_tmd(forecast, fetch_tmd_forecast())
+        tmd_raw = fetch_tmd_forecast()
+        forecast = merge_tmd(forecast, tmd_raw)
     elif not USE_TMD:
         print("  (ยังไม่ได้ตั้ง TMD_TOKEN — ใช้เฉพาะโมเดลโลก)")
+
+    slp_delta, slp_span = tmd_pressure_trend(tmd_raw)
+    if slp_delta is not None:
+        print(f"  TMD ความกดอากาศ: {'ลดลง' if slp_delta < 0 else 'เพิ่มขึ้น'} "
+              f"{abs(slp_delta):.1f} hPa ใน {slp_span} ชม.")
 
     if forecast:
         print(f"  พยากรณ์: ได้ {len(forecast)} ชั่วโมงข้างหน้า")
         for f in forecast:
+            td = f.get("tmd") or {}
+            wc = wind_compass(td.get("wd10m"))
+            wind_txt = f"จาก{wc['from_code']}" if wc else "-"
             print(f"    {f['time']:%H:%M}  ฝน {f['rain_mm']:.1f} มม.  "
                   f"โอกาส {f['prob']}%  ลมกระโชก {f['gust']:.0f} กม./ชม.  "
                   f"CAPE {f['cape'] if f['cape'] is not None else '-'}  "
                   f"รู้สึก {f['heat'] if f['heat'] is not None else '-'}°C  "
-                  f"TMD {f.get('tmd_mm') if f.get('tmd_mm') is not None else '-'}")
+                  f"TMD {f.get('tmd_mm') if f.get('tmd_mm') is not None else '-'}  "
+                  f"cond {td.get('cond', '-')}  ลม(TMD) {wind_txt}")
     else:
         print("  พยากรณ์: ดึงไม่ได้")
 
@@ -929,7 +1066,8 @@ def main():
 
     text, severity = build_message(forecast, radar, warning,
                                    always_send=args.force, tide_clash=tide_clash,
-                                   persistence_ok=persist_ok)
+                                   persistence_ok=persist_ok,
+                                   slp_delta=slp_delta, slp_span=slp_span)
 
     # บันทึกชั่วโมงที่เข้าเกณฑ์ไว้เทียบรอบหน้าเสมอ แม้จะไม่ได้ส่งข้อความ
     state["last_rain_hours"] = cur_hours
