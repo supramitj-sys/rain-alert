@@ -41,17 +41,43 @@ except ImportError:
 
 
 # =====================================================================
-#  CONFIG — แก้ตรงนี้
+#  CONFIG
 # =====================================================================
 #
-#  รันบนคอมตัวเอง  → แก้ค่าในบรรทัดข้างล่างนี้ได้เลย
-#  รันบน GitHub Actions → ไม่ต้องแก้ ให้ไปใส่ใน Settings > Secrets แทน
-#                         (สคริปต์จะอ่านจาก environment variable ก่อนเสมอ)
-#  ห้าม commit TOKEN จริงขึ้น GitHub เด็ดขาด ใครเห็นก็ยิงข้อความในนามบอทคุณได้
+#  ไฟล์นี้ถูกใช้ 2 ที่พร้อมกัน จึงต้องอ่านค่าลับจาก 2 แหล่ง:
+#
+#    รันบน GitHub Actions → อ่านจาก environment variable
+#                           (ตั้งใน Settings > Secrets and variables > Actions)
+#    รันบนเครื่องตัวเอง    → อ่านจากไฟล์ .txt ในโฟลเดอร์เดียวกัน
+#                           (ไฟล์พวกนี้อยู่ใน .gitignore แล้ว จะไม่ถูกอัปขึ้น GitHub)
+#
+#  ห้ามพิมพ์ TOKEN ลงในไฟล์ .py นี้เด็ดขาด เพราะไฟล์ .py ต้องอัปขึ้น GitHub
+#  ใครเห็น TOKEN ก็ยิงข้อความในนามบอทคุณได้
 # =====================================================================
 
-TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "8445798616:AAFfkV44XIRa5Rxcgrjz7ah5WJ8h0gJE4Vc")
-TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "805315744")
+def _secret(env_name, filename):
+    """
+    อ่านค่าลับจาก environment variable ก่อน ถ้าไม่มีค่อยอ่านจากไฟล์ข้าง ๆ สคริปต์
+
+    เรียงลำดับแบบนี้เพราะ GitHub Actions จะตั้ง env var ให้เสมอ ส่วนบนเครื่อง
+    ตัวเองไม่มี env var จึงตกมาอ่านไฟล์แทน ไฟล์เดียวกันจึงใช้ได้ทั้งสองที่
+    โดยไม่ต้องแก้โค้ดสลับไปมา
+
+    .strip('<>') เผื่อคัดลอกวงเล็บจากตัวอย่างติดมาด้วย ซึ่งเป็นความผิดพลาดที่เจอบ่อย
+    """
+    v = os.environ.get(env_name, "").strip()
+    if v:
+        return v
+    try:
+        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), filename)
+        with open(path, encoding="utf-8-sig") as f:
+            return f.read().strip().strip("<>").strip()
+    except Exception:
+        return ""
+
+
+TELEGRAM_TOKEN = _secret("TELEGRAM_TOKEN", "telegram_token.txt")
+TELEGRAM_CHAT_ID = _secret("TELEGRAM_CHAT_ID", "telegram_chat_id.txt")
 
 # พิกัดบ้าน/ไซต์งาน (บางปะกง ฉะเชิงเทรา)
 LAT = float(os.environ.get("WX_LAT", 13.53))
@@ -74,8 +100,30 @@ CAPE_ALERT = 2500          # J/kg — เกินนี้ถือว่าเ
 HEAT_ALERT = 41            # °C อุณหภูมิที่รู้สึกได้ — เกินนี้เสี่ยงเพลียแดด
 TIDE_CLASH_MM = 7.5        # ฝน มม./ชม. ที่ถือว่าหนักพอจะเตือนเมื่อตรงกับน้ำขึ้น
 
-# เรดาร์ nowcast: รัศมีที่ถือว่า "ฝนใกล้ตัว" (กม.)
-RADAR_RADIUS_KM = 25
+# ---------------------------------------------------------------------
+#  เรดาร์ nowcast — แยก "ฝนอยู่เหนือหัวเรา" ออกจาก "ฝนอยู่แถว ๆ นี้"
+# ---------------------------------------------------------------------
+#  เวอร์ชันก่อนใช้เกณฑ์เดียว: มีสีฝน 2% ของวงรัศมี 25 กม. = "ฝนอยู่เหนือ
+#  บางปะกงแล้ว" ซึ่งกว้างเกินไปมาก ก้อนฝนเล็ก ๆ ที่ห่างออกไป 30 กม.
+#  ก็ทำให้ประกาศว่าฝนตกอยู่บนหัวแล้ว
+#  ผลจริงจาก alert_log.csv สัปดาห์แรก: radar_now ยิง 39 ครั้ง ตกจริง 13%
+#
+#  จึงแยกเป็นสองวง คนละหน้าที่:
+#    OVER = วงแคบรอบจุดจริง  -> ใช้ "เป็นเหตุผล" ในการเตือน
+#    NEAR = วงกว้าง 25 กม.    -> ใช้ "ยับยั้ง" การเตือนฝนเบาเท่านั้น (RADAR_VETO)
+#           และใช้เป็นข้อมูลประกอบว่ามีฝนแถวนี้แต่ยังไม่ถึงเรา
+# ---------------------------------------------------------------------
+RADAR_OVER_KM = 6          # รัศมีที่ถือว่า "ฝนอยู่เหนือจุดนี้จริง"
+RADAR_NEAR_KM = 25         # รัศมีที่ถือว่า "มีฝนอยู่แถวนี้"
+RADAR_OVER_COVERAGE = 0.25  # ต้องมีฝนคลุมเกิน 25% ของวงแคบ จึงนับว่าตกอยู่จริง
+RADAR_NEAR_COVERAGE = 0.02  # แค่ 2% ของวงกว้างก็พอ เพราะใช้แค่ "ยับยั้ง" ไม่ใช่ "เตือน"
+RADAR_ALPHA_MIN = 70        # ความเข้มสีขั้นต่ำที่นับว่าเป็นฝน (เดิม 40 = เก็บละอองจาง ๆ ด้วย)
+
+#  ⚠️ ค่า RADAR_OVER_COVERAGE กับ RADAR_ALPHA_MIN สองตัวนี้ยัง "ตั้งจากเหตุผล"
+#  ไม่ใช่ "ตั้งจากข้อมูล" เพราะ log รอบก่อนบันทึกแค่ yes/no ไม่ได้บันทึกว่า
+#  ฝนคลุมกี่ % จึงย้อนไปหาจุดตัดที่ดีที่สุดไม่ได้
+#  ตอนนี้ log บันทึก % ไว้แล้ว เก็บอีกสัปดาห์แล้วรัน analyze_alerts.py
+#  หัวข้อ "ฝนต้องคลุมกี่ % ถึงจะเชื่อได้" จะบอกจุดตัดที่ถูกต้องจากของจริง
 
 # ส่งข้อความ "ปกติดี" ด้วยไหม (False = ส่งเฉพาะตอนมีฝน/ลม/ประกาศเตือนภัย)
 SEND_WHEN_CLEAR = False
@@ -100,7 +148,7 @@ MODELS = ["ecmwf_ifs025", "gfs_seamless", "icon_seamless"]
 # โมเดล WRF ของกรมอุตุนิยมวิทยา — ความละเอียดสูงกว่าโมเดลโลกและปรับจูนสำหรับไทย
 # ต้องลงทะเบียนที่ data.tmd.go.th/api/index1.php เพื่อรับโทเคน (ฟรี)
 # ใส่ไว้ใน GitHub Secrets ชื่อ TMD_TOKEN — ห้าม commit โทเคนจริงขึ้น repo
-TMD_TOKEN = os.environ.get("TMD_TOKEN", "")
+TMD_TOKEN = _secret("TMD_TOKEN", "tmd_token.txt")
 USE_TMD = bool(TMD_TOKEN)
 MIN_MODEL_AGREE = 2        # ต้องมีอย่างน้อยกี่โมเดลเห็นตรงกันจึงจะเตือน
 
@@ -115,17 +163,36 @@ TMD_CLOUD_DENSE = 70             # % — เมฆระดับต่ำเก
 REQUIRE_PERSISTENCE = True
 
 # ใช้เรดาร์ยับยั้งการเตือนฝนเบา — ถ้าโมเดลบอกว่ามีฝนใน 1 ชม.
-# แต่เรดาร์ไม่เห็นอะไรเลยในรัศมี 25 กม. แปลว่าโมเดลน่าจะเกลี่ยฝนผิดที่
+# แต่เรดาร์ไม่เห็นอะไรเลยแม้แต่ในวงกว้าง RADAR_NEAR_KM แปลว่าโมเดลน่าจะเกลี่ยฝนผิดที่
 RADAR_VETO = True
+
+# ---------------------------------------------------------------------
+#  ทริกเกอร์ที่ "ห้ามเตือนลำพัง" — ต้องมีหลักฐานฝนจริงมายืนยันก่อน
+# ---------------------------------------------------------------------
+#  จาก alert_log.csv สัปดาห์แรก (26 แถวที่กรอกผลจริงแล้ว):
+#    pressure (ความกดอากาศลด) ยิง 11 ครั้ง กรอกแล้ว 6 -> ตกจริง 0 ครั้ง
+#    storm    (CAPE สูง)      ยิง  7 ครั้ง กรอกแล้ว 5 -> ตกจริง 0 ครั้ง
+#  ทั้งสองตัวคือ "สภาพแวดล้อมที่เอื้อให้เกิดฝน" ไม่ใช่ "ฝนที่กำลังจะตก"
+#  ในเขตร้อน CAPE เกิน 2500 เป็นเรื่องปกติเกือบทุกบ่าย ถ้าเตือนทุกครั้ง
+#  จะกลายเป็นเสียงรบกวนจนคนเลิกอ่าน
+#
+#  เปลี่ยนเป็น: ยังคำนวณและแสดงผลอยู่ แต่ย้ายไปอยู่ท้ายข้อความในหมวด
+#  "ข้อมูลประกอบ" และจะยกระดับเป็นการเตือนก็ต่อเมื่อมีฝนจริงยืนยัน
+#  (เรดาร์เห็นฝนในวงกว้าง หรือโมเดลฝนถึงเกณฑ์)
+REQUIRE_RAIN_EVIDENCE = True
 
 STATE_FILE = "rain_alert_state.json"
 ALERT_LOG = "alert_log.csv"   # บันทึกทุกการเตือน ไว้ตรวจย้อนหลังว่าแม่นแค่ไหน
 
 
 # ระดับความรุนแรง — ใช้ตัดสินว่าจะเตือนซ้ำหรือปลุกกลางดึกไหม
+#  "radar_soon" เคยตกหล่นจากตารางนี้ ทำให้ได้ rank 0 เท่ากับ "clear"
+#  ผลคือการเตือน "ฝนกำลังเข้าใน 30 นาที" ถูก cooldown และช่วงงดรบกวน
+#  กดทิ้งแทบทุกครั้ง ทั้งที่เป็นการเตือนที่มีเวลาให้เตรียมตัวมากที่สุด
 SEVERITY_RANK = {
-    "clear": 0, "heat": 2, "gust": 3, "rain": 3, "radar_now": 4,
-    "pressure": 4, "heavy": 5, "storm": 5, "very_heavy": 6, "tide": 6,
+    "clear": 0, "heat": 2, "gust": 3, "rain": 3,
+    "radar_soon": 4, "radar_now": 4, "pressure": 4,
+    "heavy": 5, "storm": 5, "very_heavy": 6, "tide": 6,
     "warning": 7,
 }
 
@@ -147,8 +214,10 @@ def now_th():
 
 def send_telegram(text: str) -> bool:
     """ส่งข้อความเข้า Telegram"""
-    if "ใส่_" in TELEGRAM_TOKEN or "ใส่_" in TELEGRAM_CHAT_ID:
+    if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID or "ใส่_" in TELEGRAM_TOKEN:
         print("!! ยังไม่ได้ตั้งค่า TELEGRAM_TOKEN / TELEGRAM_CHAT_ID")
+        print("   บนเครื่องตัวเอง: สร้างไฟล์ telegram_token.txt และ telegram_chat_id.txt")
+        print("   บน GitHub Actions: ตั้งใน Settings > Secrets and variables > Actions")
         print("--- ข้อความที่จะส่ง ---")
         print(text)
         return False
@@ -272,34 +341,105 @@ def check_persistence(state, rain_hours):
     return bool(overlap), now_hours
 
 
-def log_alert(severity, forecast, radar, sent):
+# ---------------------------------------------------------------------
+#  โครงคอลัมน์ของ alert_log.csv
+# ---------------------------------------------------------------------
+#  ช่อง "ฝนตกจริง(กรอกเอง Y/N)" ต้องเป็นคอลัมน์สุดท้ายเสมอ เพราะเป็นช่อง
+#  ที่ต้องกรอกมือผ่านหน้าเว็บ GitHub อยู่ท้ายสุดแล้วหาง่ายที่สุด
+#
+#  บทเรียนจากของจริง: เวอร์ชันแรกมี 7 คอลัมน์ พอเพิ่มเป็น 10 คอลัมน์
+#  หัวตารางไม่ถูกเขียนใหม่ (เพราะเขียนเฉพาะตอนไฟล์ยังไม่มี) ทำให้
+#  analyze_alerts.py อ่านคอลัมน์เพี้ยนทั้งไฟล์ และมองไม่เห็นผลที่กรอกไว้
+#  ทั้ง 26 แถวเลย — ข้อมูลที่นั่งกรอกมาทั้งสัปดาห์สูญเปล่า
+#  จึงต้องมีตัวย้ายสคีมาอัตโนมัติ ไม่ใช่แค่เขียนหัวตารางตอนสร้างไฟล์
+# ---------------------------------------------------------------------
+LOG_COLUMNS = ["เวลา", "ระดับ", "ทริกเกอร์", "ฝนที่ทำนาย(มม./ชม.)",
+               "โอกาสฝน(%)", "โมเดลตรงกัน", "จำนวนโมเดล", "TMD_WRF(มม.)",
+               "เรดาร์เห็นฝน", "เรดาร์คลุมวงแคบ(%)", "เรดาร์คลุมวงกว้าง(%)",
+               "ส่งจริง", "ฝนตกจริง(กรอกเอง Y/N)"]
+
+# สคีมาเก่าที่เคยใช้ อ้างอิงด้วย "จำนวนคอลัมน์" เพราะแถวเก่าไม่มีอะไรระบุเวอร์ชัน
+LEGACY_LAYOUTS = {
+    7:  ["เวลา", "ระดับ", "ฝนที่ทำนาย(มม./ชม.)", "โอกาสฝน(%)",
+         "เรดาร์เห็นฝน", "ส่งจริง", "ฝนตกจริง(กรอกเอง Y/N)"],
+    10: ["เวลา", "ระดับ", "ฝนที่ทำนาย(มม./ชม.)", "โอกาสฝน(%)", "โมเดลตรงกัน",
+         "จำนวนโมเดล", "TMD_WRF(มม.)", "เรดาร์เห็นฝน", "ส่งจริง",
+         "ฝนตกจริง(กรอกเอง Y/N)"],
+}
+
+
+def migrate_log():
+    """
+    ย้ายไฟล์ log เก่าให้เข้าโครงคอลัมน์ปัจจุบัน โดยรักษาค่าที่กรอกมือไว้ครบ
+
+    เดาสคีมาของแต่ละแถวจาก "จำนวนคอลัมน์" ไม่ใช่จากหัวตาราง เพราะหัวตาราง
+    นั่นแหละที่เคยค้างเป็นของเก่า แถวไหนกว้างเท่าไรก็แปลตามสคีมานั้น
+    เรียกทุกครั้งก่อนเขียน log — ถ้าโครงตรงอยู่แล้วจะไม่แตะไฟล์
+    """
+    import csv, os as _os
+    if not _os.path.exists(ALERT_LOG):
+        return
+    with open(ALERT_LOG, encoding="utf-8-sig", newline="") as fp:
+        rows = [r for r in csv.reader(fp) if r]
+    if not rows:
+        return
+    if rows[0] == LOG_COLUMNS:
+        return                      # ตรงอยู่แล้ว ไม่ต้องทำอะไร
+
+    out = []
+    for r in rows[1:]:              # ข้ามหัวตารางเก่า
+        layout = LOG_COLUMNS if len(r) == len(LOG_COLUMNS) else LEGACY_LAYOUTS.get(len(r))
+        if layout is None:
+            # ความกว้างไม่รู้จัก — อย่างน้อยรักษาเวลาและค่าที่กรอกมือ (ช่องสุดท้าย) ไว้
+            d = {"เวลา": r[0] if r else "", "ฝนตกจริง(กรอกเอง Y/N)": r[-1] if r else ""}
+        else:
+            d = dict(zip(layout, r))
+        out.append([d.get(c, "") for c in LOG_COLUMNS])
+
+    with open(ALERT_LOG, "w", newline="", encoding="utf-8-sig") as fp:
+        w = csv.writer(fp)
+        w.writerow(LOG_COLUMNS)
+        w.writerows(out)
+    print(f"  ย้ายโครงคอลัมน์ alert_log.csv เป็นเวอร์ชันใหม่แล้ว ({len(out)} แถว)")
+
+
+def log_alert(severity, forecast, radar, sent, triggers=None):
     """
     บันทึกทุกครั้งที่ระบบ "คิดจะเตือน" ลงไฟล์ CSV
     ไว้ย้อนดูภายหลังว่าที่เตือนไปนั้นฝนตกจริงกี่ครั้ง
     ช่องสุดท้าย rain_actual เว้นไว้ให้กรอกเองว่าตกจริงไหม (Y/N)
+
+    บันทึก triggers ทุกตัวที่ทำงาน ไม่ใช่แค่ severity ตัวเดียว เพราะ severity
+    เก็บได้แค่ตัวที่รุนแรงที่สุด ทำให้วิเคราะห์ย้อนหลังไม่ได้ว่าตัวไหนกันแน่
+    ที่ทำให้เตือนผิด — ซึ่งเป็นคำถามสำคัญที่สุดในการจูนระบบ
+
+    บันทึก % พื้นที่ที่เรดาร์เห็นฝนด้วย (ไม่ใช่แค่ yes/no) เพื่อให้สัปดาห์หน้า
+    จูนเกณฑ์ RADAR_OVER_COVERAGE จากข้อมูลจริงได้ แทนที่จะเดาเอา
     """
     try:
         import csv, os as _os
+        migrate_log()
         new = not _os.path.exists(ALERT_LOG)
         mx = max((f["rain_mm"] for f in forecast), default=0) if forecast else 0
         mp = max((f["prob"] for f in forecast), default=0) if forecast else 0
         ag = max((f["agree"] for f in forecast), default=0) if forecast else 0
         nm = max((f["n_models"] for f in forecast), default=0) if forecast else 0
-        rd = ""
-        if radar and radar.get("rain_detected"):
-            rd = "yes" if radar["rain_detected"].get("now") else "no"
+        rd = co = cn = ""
+        det = (radar or {}).get("rain_detected")
+        if det:
+            rd = "yes" if det.get("now") else "no"
+            co = f"{det.get('cover_over', 0) * 100:.0f}"
+            cn = f"{det.get('cover_near', 0) * 100:.0f}"
         with open(ALERT_LOG, "a", newline="", encoding="utf-8-sig") as fp:
             w = csv.writer(fp)
             if new:
-                w.writerow(["เวลา", "ระดับ", "ฝนที่ทำนาย(มม./ชม.)",
-                            "โอกาสฝน(%)", "โมเดลตรงกัน", "จำนวนโมเดล",
-                            "TMD_WRF(มม.)", "เรดาร์เห็นฝน", "ส่งจริง",
-                            "ฝนตกจริง(กรอกเอง Y/N)"])
+                w.writerow(LOG_COLUMNS)
             tmds = [f.get("tmd_mm") for f in (forecast or [])
                     if f.get("tmd_mm") is not None]
             td = f"{max(tmds):.1f}" if tmds else ""
             w.writerow([f"{now_th():%Y-%m-%d %H:%M}", severity,
-                        f"{mx:.1f}", f"{mp:.0f}", ag, nm, td, rd,
+                        "|".join(triggers or []),
+                        f"{mx:.1f}", f"{mp:.0f}", ag, nm, td, rd, co, cn,
                         "yes" if sent else "no", ""])
     except Exception as e:
         print(f"  บันทึก log ไม่ได้: {e}")
@@ -626,17 +766,25 @@ def latlon_to_tile_exact(lat, lon, zoom):
 
 def check_radar_pixel(radar_info, nowcast, past):
     """
-    อ่านภาพ tile เรดาร์ตรงพิกัดบ้าน แล้วดูว่ามีสีฝนหรือไม่
+    อ่านภาพ tile เรดาร์ตรงพิกัดบ้าน แล้ววัดว่ามีฝนคลุมพื้นที่กี่ %
     ต้องมี Pillow (pip install pillow) — ถ้าไม่มีจะข้ามไป คืนค่า None
-    คืนค่า: {"now": bool, "in_30min": bool} หรือ None
 
-    หมายเหตุสำคัญ 2 ข้อ (แก้จากเวอร์ชันแรกที่ผิด):
+    คืนค่า dict:
+      now         ฝนคลุมวงแคบ (RADAR_OVER_KM) เกินเกณฑ์ = ตกอยู่เหนือจุดนี้จริง
+      in_30min    เฟรม nowcast ข้างหน้าคลุมวงแคบเกินเกณฑ์
+      near_now    มีฝนที่ไหนก็ได้ในวงกว้าง (RADAR_NEAR_KM)
+      cover_over  สัดส่วนพื้นที่วงแคบที่มีฝน 0.0-1.0  (ไว้ใส่ในข้อความและ log)
+      cover_near  สัดส่วนพื้นที่วงกว้างที่มีฝน 0.0-1.0
+
+    หมายเหตุสำคัญ 3 ข้อ (แก้จากเวอร์ชันก่อน ๆ ที่ผิด):
       1) RainViewer ชั้นฟรีรองรับ tile ถึงระดับซูม 7 เท่านั้น
          ถ้าขอซูมสูงกว่านี้ เซิร์ฟเวอร์จะส่งภาพที่มีข้อความ
          "Zoom Level Not Supported" กลับมา ซึ่งมีพิกเซลทึบเต็มภาพ
          ทำให้ตรวจว่า "มีฝน" ทั้งที่ไม่มี — เป็น false positive ร้ายแรง
       2) ต้องคำนวณตำแหน่งพิกเซลจริงภายใน tile ไม่ใช่ดูกลาง tile
          เพราะที่ซูม 7 หนึ่ง tile กว้างราว 300 กม.
+      3) ขอภาพแบบ smooth=0 ไม่ใช่ smooth=1 เพราะการเกลี่ยสีทำให้ขอบก้อนฝน
+         ฟุ้งออกไปกว้างกว่าของจริง แล้วไปพองตัวเลข % พื้นที่ที่วัดได้
     """
     try:
         from PIL import Image
@@ -652,40 +800,58 @@ def check_radar_pixel(radar_info, nowcast, past):
     # ขนาดจริงของ tile บนพื้นโลก ณ ละติจูดนี้ (กม.)
     tile_km = 40075.0 / (2 ** ZOOM) * math.cos(math.radians(LAT))
     km_per_px = tile_km / TILE_PX
-    rad_px = max(3, int(RADAR_RADIUS_KM / km_per_px))   # รัศมีที่ถือว่า "ใกล้ตัว"
+    rad_over = max(2, int(RADAR_OVER_KM / km_per_px))   # วงแคบ = เหนือจุดนี้
+    rad_near = max(3, int(RADAR_NEAR_KM / km_per_px))   # วงกว้าง = แถวนี้
 
-    def tile_has_rain(path):
-        # color scheme 4 = universal blue, smooth=1, snow=0
-        url = f"{host}{path}/{TILE_PX}/{ZOOM}/{x}/{y}/4/1_0.png"
+    def tile_coverage(path):
+        """คืน (สัดส่วนฝนในวงแคบ, สัดส่วนฝนในวงกว้าง) — วัดทั้งสองวงในรอบเดียว"""
+        # color scheme 4 = universal blue, smooth=0, snow=0
+        url = f"{host}{path}/{TILE_PX}/{ZOOM}/{x}/{y}/4/0_0.png"
         try:
             r = requests.get(url, timeout=20)
             if r.status_code != 200:
-                return False
+                return 0.0, 0.0
             img = Image.open(BytesIO(r.content)).convert("RGBA")
             w, h = img.size
             cx, cy = int(fx * w), int(fy * h)
 
-            hits = total = 0
-            for px in range(cx - rad_px, cx + rad_px + 1):
-                for py in range(cy - rad_px, cy + rad_px + 1):
+            hit_o = tot_o = hit_n = tot_n = 0
+            for px in range(cx - rad_near, cx + rad_near + 1):
+                for py in range(cy - rad_near, cy + rad_near + 1):
                     if not (0 <= px < w and 0 <= py < h):
                         continue          # จุดที่ล้นออกนอก tile ข้ามไป
-                    if (px - cx) ** 2 + (py - cy) ** 2 > rad_px ** 2:
+                    d2 = (px - cx) ** 2 + (py - cy) ** 2
+                    if d2 > rad_near ** 2:
                         continue          # นับเฉพาะในวงกลม ไม่ใช่สี่เหลี่ยม
-                    total += 1
-                    if img.getpixel((px, py))[3] > 40:   # alpha > 40 = มีสี = มีฝน
-                        hits += 1
-            return total > 0 and (hits / total) > 0.02
+                    wet = img.getpixel((px, py))[3] > RADAR_ALPHA_MIN
+                    tot_n += 1
+                    if wet:
+                        hit_n += 1
+                    if d2 <= rad_over ** 2:   # วงแคบซ้อนอยู่ในวงกว้าง นับซ้ำได้เลย
+                        tot_o += 1
+                        if wet:
+                            hit_o += 1
+            return (hit_o / tot_o if tot_o else 0.0,
+                    hit_n / tot_n if tot_n else 0.0)
         except Exception:
-            return False
+            return 0.0, 0.0
 
-    res = {"now": False, "in_30min": False}
+    res = {"now": False, "in_30min": False, "near_now": False,
+           "cover_over": 0.0, "cover_near": 0.0}
+
     if past:
-        res["now"] = tile_has_rain(past[-1]["path"])
+        co, cn = tile_coverage(past[-1]["path"])
+        res["cover_over"], res["cover_near"] = co, cn
+        res["now"] = co >= RADAR_OVER_COVERAGE
+        res["near_now"] = cn >= RADAR_NEAR_COVERAGE
+
     if nowcast:
         # เฟรม nowcast แรก ๆ = อีกประมาณ 10-30 นาทีข้างหน้า
+        # ใช้เกณฑ์วงแคบเหมือนกัน เพราะคำถามคือ "ฝนจะมาถึงจุดนี้ไหม"
+        # ไม่ใช่ "มีฝนอยู่ที่ไหนสักแห่งในภาพไหม"
         for f in nowcast[:3]:
-            if tile_has_rain(f["path"]):
+            co, _ = tile_coverage(f["path"])
+            if co >= RADAR_OVER_COVERAGE:
                 res["in_30min"] = True
                 break
     return res
@@ -784,10 +950,18 @@ def fetch_tide_clash(forecast):
 def build_message(forecast, radar, warning, always_send=False, tide_clash=None,
                   persistence_ok=True, slp_delta=None, slp_span=0):
     """
-    สร้างข้อความแจ้งเตือน คืนค่า (text, severity_key) หรือ (None, None) ถ้าไม่ต้องเตือน
+    สร้างข้อความแจ้งเตือน คืนค่า (text, severity_key, triggers)
+    หรือ (None, None, []) ถ้าไม่ต้องเตือน
 
     always_send=True  → ส่งข้อความเสมอแม้ไม่มีฝน (ใช้กับสรุปประจำวันตอนเช้า)
     slp_delta/slp_span → แนวโน้มความกดอากาศจาก TMD (ดู tmd_pressure_trend())
+
+    โครงข้อความแบ่งเป็นสองส่วนชัดเจน:
+      lines = เหตุผลที่ "เตือน" จริง ๆ
+      info  = ข้อมูลประกอบที่ไม่ได้ทำให้เตือน (เช่น ความกดอากาศ, CAPE)
+              แยกไว้ท้ายข้อความ เพื่อไม่ให้ปนกับเหตุผลที่ต้องลงมือทำอะไร
+    triggers = รายชื่อทริกเกอร์ทั้งหมดที่ทำงาน ไว้เขียนลง alert_log.csv
+               เพื่อให้วิเคราะห์ย้อนหลังได้ว่าตัวไหนแม่นตัวไหนมั่ว
     """
 
     def _bump(sev, candidate):
@@ -795,6 +969,8 @@ def build_message(forecast, radar, warning, always_send=False, tide_clash=None,
         (กันไม่ให้สัญญาณที่มาทีหลังในโค้ดไปเบียดสัญญาณที่รุนแรงกว่าซึ่งเจอไปก่อนหน้า)"""
         return candidate if SEVERITY_RANK.get(sev, 0) < SEVERITY_RANK.get(candidate, 0) else sev
     lines = []
+    info = []
+    triggers = []
     severity = None
     t_now = now_th().strftime("%H:%M")
 
@@ -802,24 +978,39 @@ def build_message(forecast, radar, warning, always_send=False, tide_clash=None,
     if tide_clash:
         lines.append(f"🌊 <b>ฝนหนักตรงกับน้ำขึ้นสูง</b>\n{tide_clash}")
         severity = "tide"
+        triggers.append("tide")
 
     # --- ประกาศเตือนภัย ---
     if warning:
         lines.append(f"⚠️ <b>ประกาศเตือนภัย</b>\n{warning}")
         severity = "warning"
+        triggers.append("warning")
 
-    # --- เรดาร์ nowcast ---
-    radar_line = None
+    # ---------------------------------------------------------------
+    #  เรดาร์ nowcast
+    # ---------------------------------------------------------------
+    #  บอกตัวเลขที่วัดได้จริงไปเลย ไม่ใช่แค่ "มีฝน/ไม่มีฝน"
+    #  เพราะ "ฝนคลุม 80% ของรัศมี 6 กม." กับ "คลุม 26%" ต่างกันมาก
+    #  ในแง่ว่าควรหยุดงานเลยหรือแค่เตรียมตัว แต่เดิมสองกรณีนี้ขึ้นข้อความเดียวกัน
+    # ---------------------------------------------------------------
     if radar and radar.get("rain_detected"):
         rd = radar["rain_detected"]
+        over = rd.get("cover_over", 0.0) * 100
+        near = rd.get("cover_near", 0.0) * 100
         if rd.get("now"):
-            radar_line = f"📡 เรดาร์: มีฝนอยู่เหนือ{PLACE_NAME}แล้วตอนนี้"
+            lines.append(f"📡 <b>เรดาร์: ฝนตกอยู่เหนือ{PLACE_NAME}แล้ว</b>\n"
+                         f"ฝนคลุม {over:.0f}% ของรัศมี {RADAR_OVER_KM} กม.รอบจุดนี้")
             severity = severity or "radar_now"
+            triggers.append("radar_now")
         elif rd.get("in_30min"):
-            radar_line = f"📡 เรดาร์: มีกลุ่มฝนกำลังเข้า{PLACE_NAME} ใน ~30 นาที"
+            lines.append(f"📡 <b>เรดาร์: กลุ่มฝนกำลังเข้า{PLACE_NAME}</b> ใน ~30 นาที")
             severity = severity or "radar_soon"
-    if radar_line:
-        lines.append(radar_line)
+            triggers.append("radar_soon")
+        elif rd.get("near_now"):
+            # มีฝนในวงกว้างแต่ยังไม่ถึงจุดเรา — เป็นข้อมูลประกอบ ไม่ใช่เหตุผลเตือน
+            # (เกณฑ์เดิมนับกรณีนี้เป็น "ฝนอยู่เหนือหัวแล้ว" = ที่มาของ false alarm)
+            info.append(f"📡 มีกลุ่มฝนในรัศมี {RADAR_NEAR_KM} กม. "
+                        f"(คลุม {near:.0f}%) แต่ยังไม่เข้า{PLACE_NAME}")
 
     # --- พยากรณ์รายชั่วโมง ---
     if forecast:
@@ -847,16 +1038,20 @@ def build_message(forecast, radar, warning, always_send=False, tide_clash=None,
         #  ปัญหาที่เจอจริง: โมเดลความละเอียด 9-13 กม. มักเกลี่ยฝนกระจาย
         #  ทำให้บอกว่ามีฝน 1-3 มม. ทั้งที่ไม่ตกจริงตรงจุดเรา
         #
-        #  กฎ: ถ้าเรดาร์ไม่เห็นฝนเลยในรัศมี 25 กม. และฝนที่ทำนายยังไม่ถึง
-        #      ระดับหนัก → งดเตือน เพราะโอกาสเตือนผิดสูงกว่าโอกาสถูก
+        #  กฎ: ถ้าเรดาร์ไม่เห็นฝนเลยแม้แต่ในวงกว้าง RADAR_NEAR_KM และฝนที่
+        #      ทำนายยังไม่ถึงระดับหนัก → งดเตือน เพราะโอกาสเตือนผิดสูงกว่าถูก
         #      แต่ถ้าเป็นฝนหนัก (>= 7.5 มม./ชม.) เตือนเสมอ
         #      เพราะราคาของการพลาดสูงกว่าราคาของการเตือนเกิน
+        #
+        #  ใช้วงกว้าง (near) ไม่ใช่วงแคบ (over) ตรงนี้โดยตั้งใจ — คำถามคือ
+        #  "มีฝนอยู่ในระบบอากาศแถบนี้ไหม" ถ้าไม่มีเลยแปลว่าโมเดลจินตนาการเอง
+        #  ถ้าใช้วงแคบจะยับยั้งฝนที่กำลังเคลื่อนเข้ามาทิ้งไปด้วย
         # ---------------------------------------------------------------
         vetoed = False
         if RADAR_VETO and rain_hours and radar is not None:
             rd = radar.get("rain_detected")
-            radar_clear = (rd is not None
-                           and not rd.get("now") and not rd.get("in_30min"))
+            radar_clear = (rd is not None and not rd.get("near_now")
+                           and not rd.get("in_30min"))
             light_only = max(f["rain_mm"] for f in rain_hours) < RAIN_MM_HEAVY
             if radar_clear and light_only:
                 rain_hours = []
@@ -877,6 +1072,7 @@ def build_message(forecast, radar, warning, always_send=False, tide_clash=None,
             else:
                 head, sev = "🌧️ <b>มีฝน</b>", "rain"
             severity = severity or sev
+            triggers.append(sev)
 
             slots = ", ".join(
                 f"{f['time'].strftime('%H:%M')} ({f['rain_mm']:.1f} มม.)"
@@ -884,8 +1080,13 @@ def build_message(forecast, radar, warning, always_send=False, tide_clash=None,
             )
             conf = "—"
             if radar and radar.get("rain_detected") is not None:
-                conf = ("เรดาร์ยืนยันแล้ว ✓" if radar["rain_detected"].get("now")
-                        else "เรดาร์ยังไม่เห็น")
+                _rd = radar["rain_detected"]
+                if _rd.get("now"):
+                    conf = "เรดาร์ยืนยันแล้ว ✓"
+                elif _rd.get("in_30min") or _rd.get("near_now"):
+                    conf = "เรดาร์เห็นฝนใกล้ ๆ"
+                else:
+                    conf = "เรดาร์ยังไม่เห็นฝนเลย"
             best = max(rain_hours, key=lambda f: f["agree"])
             agree_txt = f"{best['agree']}/{best['n_models']} โมเดลตรงกัน"
             tmd_txt = ""
@@ -916,24 +1117,44 @@ def build_message(forecast, radar, warning, always_send=False, tide_clash=None,
         if cond_hours:
             worst = max(f["tmd"]["cond"] for f in cond_hours)
             severity = _bump(severity, "storm" if worst == 8 else "heavy")
+            triggers.append(f"tmd_cond{worst}")
             when = ", ".join(f["time"].strftime("%H:%M") for f in cond_hours[:3])
             label = TMD_COND_TEXT.get(worst, str(worst))
             icon = "⛈️" if worst == 8 else "🌧️"
             lines.append(f"{icon} <b>TMD ระบุสภาพอากาศ: {label}</b> (cond={worst})\n"
                          f"ช่วงเวลา: {when}")
 
-        # --- ความเสี่ยงพายุฟ้าคะนอง (CAPE) ---
+        # ---------------------------------------------------------------
+        #  ความเสี่ยงพายุฟ้าคะนอง (CAPE)
+        # ---------------------------------------------------------------
+        #  CAPE บอกว่า "บรรยากาศพร้อมจะเกิดพายุ" ไม่ได้บอกว่า "จะเกิด"
+        #  ในเขตร้อนช่วงฤดูฝน CAPE เกิน 2500 เป็นเรื่องปกติแทบทุกบ่าย
+        #  จาก alert_log.csv: ยิงไป 7 ครั้ง กรอกผลแล้ว 5 ครั้ง ตกจริง 0 ครั้ง
+        #  จึงต้องมีหลักฐานว่ามีฝนจริงมายืนยันก่อน ถึงจะยกเป็นการเตือน
+        # ---------------------------------------------------------------
         capes = [f["cape"] for f in forecast if f["cape"] is not None]
         if capes and max(capes) >= CAPE_ALERT:
-            severity = severity or "storm"
-            lines.append(f"⚡ <b>บรรยากาศไม่เสถียรมาก (CAPE {max(capes):.0f} J/kg)</b>\n"
-                         f"เสี่ยงพายุฝนฟ้าคะนองรุนแรง ลมกระโชก และฟ้าผ่า\n"
-                         f"→ เตรียมหยุดงานที่สูงและงานเครน ถอดปลั๊กเครื่องมือไฟฟ้า")
+            # หลักฐานต้องเป็นฝนที่ "ถึงตัวเราหรือกำลังจะถึง" เท่านั้น
+            # จงใจไม่นับ near_now (ฝนที่ไหนก็ได้ในรัศมี 25 กม.) เพราะจาก log จริง
+            # เงื่อนไขนั้นเป็นจริง 39/58 ครั้ง = แทบไม่ได้กรองอะไรเลย
+            rd = (radar or {}).get("rain_detected") or {}
+            has_evidence = (rd.get("now") or rd.get("in_30min")
+                            or max_rain >= RAIN_MM_ALERT)
+            if has_evidence or not REQUIRE_RAIN_EVIDENCE:
+                severity = _bump(severity, "storm")
+                triggers.append("cape")
+                lines.append(f"⚡ <b>บรรยากาศไม่เสถียรมาก (CAPE {max(capes):.0f} J/kg)</b>\n"
+                             f"เสี่ยงพายุฝนฟ้าคะนองรุนแรง ลมกระโชก และฟ้าผ่า\n"
+                             f"→ เตรียมหยุดงานที่สูงและงานเครน ถอดปลั๊กเครื่องมือไฟฟ้า")
+            else:
+                info.append(f"⚡ CAPE {max(capes):.0f} J/kg — บรรยากาศพร้อมเกิดพายุ "
+                            f"แต่ยังไม่มีฝนจริงทั้งในเรดาร์และโมเดล (เฝ้าระวังเฉย ๆ)")
 
         # --- ความร้อน (ความปลอดภัยคนงาน) ---
         heats = [f["heat"] for f in forecast if f["heat"] is not None]
         if heats and max(heats) >= HEAT_ALERT:
             severity = severity or "heat"
+            triggers.append("heat")
             lines.append(f"🥵 <b>อุณหภูมิที่รู้สึกได้ {max(heats):.0f}°C</b>\n"
                          f"เสี่ยงตะคริวและเพลียแดด — เพิ่มรอบพัก จัดน้ำดื่มและจุดพักในร่ม")
 
@@ -941,10 +1162,12 @@ def build_message(forecast, radar, warning, always_send=False, tide_clash=None,
         wind_hours = [f for f in forecast if f.get("tmd", {}).get("wd10m") is not None]
         if max_gust >= GUST_DANGER:
             severity = severity or "gust"
+            triggers.append("gust")
             lines.append(f"💨 <b>ลมกระโชกแรงมาก {max_gust:.0f} กม./ชม.</b>\n"
                          f"→ ควรหยุดงานนั่งร้าน/เครน/ยกของสูง และรัดผ้าใบคลุมให้แน่น")
         elif max_gust >= GUST_ALERT:
             severity = severity or "gust"
+            triggers.append("gust")
             lines.append(f"💨 ลมกระโชก {max_gust:.0f} กม./ชม. — ระวังงานที่สูง นั่งร้าน ผ้าใบคลุม")
 
         # --- ทิศทางลมจาก TMD (ถ้ามี) — บอกด้านที่ลมมาจริง ๆ ไว้กางผ้าใบ/ป้องกันให้ถูกด้าน ---
@@ -957,14 +1180,27 @@ def build_message(forecast, radar, warning, always_send=False, tide_clash=None,
                     f"→ กางของ/ผูกผ้าใบด้านรับลมทิศ{wc['from_code']}ให้แน่นที่สุด"
                 )
 
-        # --- ความกดอากาศจาก TMD: สัญญาณเตือนล่วงหน้าก่อนโมเดลฝนจะฟันธง ---
+        # ---------------------------------------------------------------
+        #  ความกดอากาศจาก TMD
+        # ---------------------------------------------------------------
+        #  เดิมเป็นทริกเกอร์เตือนเดี่ยว ๆ ผลจริงจาก alert_log.csv:
+        #  ยิงไป 11 ครั้ง กรอกผลแล้ว 6 ครั้ง ตกจริง 0 ครั้ง
+        #  ความกดอากาศลด 1.5 hPa ในเขตร้อนเกิดจากรอบวันปกติ (diurnal cycle)
+        #  ได้เองอยู่แล้ว จึงไม่ใช่สัญญาณฝนที่เชื่อถือได้ในตัวมันเอง
+        #  ย้ายไปเป็นข้อมูลประกอบ และยกเป็นการเตือนเมื่อมีฝนจริงยืนยันเท่านั้น
+        # ---------------------------------------------------------------
         if slp_delta is not None and slp_delta <= -TMD_PRESSURE_DROP_ALERT:
-            severity = _bump(severity, "pressure")
-            lines.append(
-                f"🇹🇭 <b>ความกดอากาศลดลง {abs(slp_delta):.1f} hPa ใน {slp_span} ชม.</b>\n"
-                f"สัญญาณเริ่มมีระบบความกดอากาศต่ำ/พายุเข้าใกล้ — จับตาต่อเนื่อง"
-                f" แม้โมเดลฝนยังไม่ฟันธง"
-            )
+            txt = f"ความกดอากาศลดลง {abs(slp_delta):.1f} hPa ใน {slp_span} ชม."
+            if severity is not None or not REQUIRE_RAIN_EVIDENCE:
+                # มีเหตุอื่นที่ต้องเตือนอยู่แล้ว — ตรงนี้ช่วยเสริมว่าระบบกำลังก่อตัว
+                triggers.append("pressure")
+                lines.append(
+                    f"🇹🇭 <b>{txt}</b>\n"
+                    f"สัญญาณระบบความกดอากาศต่ำ/พายุเข้าใกล้ — เสริมว่าสถานการณ์"
+                    f"มีแนวโน้มแย่ลงต่อเนื่อง"
+                )
+            else:
+                info.append(f"🇹🇭 {txt} (ยังไม่มีฝนจริงยืนยัน)")
 
     # --- ไม่มีอะไรต้องเตือน ---
     if severity is None:
@@ -976,17 +1212,28 @@ def build_message(forecast, radar, warning, always_send=False, tide_clash=None,
                 mg = max((f["gust"] for f in forecast), default=0)
                 extra = (f"\nโอกาสฝนสูงสุด {mp:.0f}% · ฝนสูงสุด {mx:.1f} มม./ชม. "
                          f"· ลมกระโชกสูงสุด {mg:.0f} กม./ชม.")
+            # ข้อมูลประกอบ (ความกดอากาศ/CAPE/ฝนรอบนอก) ยังมีค่าในสรุปเช้า
+            # เพราะเป็นภาพรวมว่าวันนี้ต้องเฝ้าอะไรบ้าง แม้ยังไม่ถึงขั้นเตือน
+            side = ("\n\n<b>ข้อมูลประกอบ</b>\n" + "\n".join(info)) if info else ""
             return (f"✅ <b>{PLACE_NAME}</b> {t_now} — ไม่มีฝนใน {LOOKAHEAD_HOURS} ชม.ข้างหน้า "
-                    f"ไม่มีประกาศเตือนภัย{extra}"
-                    f"\n<i>ที่มา: กรมอุตุนิยมวิทยา / Open-Meteo</i>"), "clear"
-        return None, None
+                    f"ไม่มีประกาศเตือนภัย{extra}{side}"
+                    f"\n<i>ที่มา: กรมอุตุนิยมวิทยา / Open-Meteo</i>"), "clear", triggers
+        return None, None, []
 
     header = f"🌏 <b>เตือนสภาพอากาศ {PLACE_NAME}</b>  ({t_now})"
+
+    body = "\n\n".join(lines)
+
+    # ข้อมูลประกอบต่อท้าย — คั่นให้ชัดว่าไม่ใช่เหตุผลที่เตือน
+    # เพื่อไม่ให้คนอ่านเข้าใจผิดว่าต้องลงมือทำอะไรกับบรรทัดพวกนี้
+    if info:
+        body += "\n\n— — —\n<i>ข้อมูลประกอบ (ยังไม่ถึงขั้นต้องเตือน)</i>\n" + "\n".join(info)
+
     footer = "\n<i>ที่มา: กรมอุตุนิยมวิทยา / Open-Meteo / RainViewer</i>"
     if radar and radar.get("map_url"):
         footer = f"\n<a href=\"{radar['map_url']}\">ดูเรดาร์สด</a>" + footer
 
-    return header + "\n\n" + "\n\n".join(lines) + footer, severity
+    return header + "\n\n" + body + footer, severity, triggers
 
 
 # =====================================================================
@@ -1043,7 +1290,10 @@ def main():
         if rd is None:
             print("  เรดาร์: ข้ามการอ่านภาพ (ยังไม่ได้ติดตั้ง Pillow — pip install pillow)")
         else:
-            print(f"  เรดาร์: ฝนตอนนี้={rd['now']}  ฝนใน 30 นาที={rd['in_30min']}")
+            print(f"  เรดาร์: เหนือจุดนี้={rd['now']} (คลุม {rd['cover_over']*100:.0f}% "
+                  f"ของรัศมี {RADAR_OVER_KM} กม.)  ใน 30 นาที={rd['in_30min']}  "
+                  f"แถวนี้={rd['near_now']} (คลุม {rd['cover_near']*100:.0f}% "
+                  f"ของรัศมี {RADAR_NEAR_KM} กม.)")
     else:
         print("  เรดาร์: ดึงไม่ได้")
 
@@ -1064,10 +1314,13 @@ def main():
         print(f"  ชั่วโมงที่เข้าเกณฑ์: {len(cand)} | "
               f"เคยเห็นรอบก่อน: {'ใช่' if persist_ok else 'ยังไม่เคย'}")
 
-    text, severity = build_message(forecast, radar, warning,
-                                   always_send=args.force, tide_clash=tide_clash,
-                                   persistence_ok=persist_ok,
-                                   slp_delta=slp_delta, slp_span=slp_span)
+    text, severity, triggers = build_message(
+        forecast, radar, warning,
+        always_send=args.force, tide_clash=tide_clash,
+        persistence_ok=persist_ok,
+        slp_delta=slp_delta, slp_span=slp_span)
+    if triggers:
+        print(f"  ทริกเกอร์ที่ทำงาน: {', '.join(triggers)}")
 
     # บันทึกชั่วโมงที่เข้าเกณฑ์ไว้เทียบรอบหน้าเสมอ แม้จะไม่ได้ส่งข้อความ
     state["last_rain_hours"] = cur_hours
@@ -1083,19 +1336,19 @@ def main():
     if not args.force and in_quiet_hours() and rank < QUIET_MIN_RANK:
         print(f"  → อยู่ในช่วงงดรบกวน ({QUIET_START}:00-{QUIET_END}:00) "
               f"และความรุนแรงระดับ {rank} ยังไม่ถึงเกณฑ์ปลุก ({QUIET_MIN_RANK}) ไม่ส่ง")
-        log_alert(severity, forecast, radar, sent=False)
+        log_alert(severity, forecast, radar, sent=False, triggers=triggers)
         return
 
     if not args.force and in_cooldown(state, severity):
         print(f"  → เพิ่งเตือนไปภายใน {COOLDOWN_MINUTES} นาที "
               f"และความรุนแรงไม่ได้เพิ่มขึ้น ไม่ส่งซ้ำ")
-        log_alert(severity, forecast, radar, sent=False)
+        log_alert(severity, forecast, radar, sent=False, triggers=triggers)
         return
 
     print("--- ข้อความ ---")
     print(text)
     ok = send_telegram(text)
-    log_alert(severity, forecast, radar, sent=ok)
+    log_alert(severity, forecast, radar, sent=ok, triggers=triggers)
     if ok:
         state["last_alert_at"] = now_th().isoformat()
         state["last_rank"] = rank
