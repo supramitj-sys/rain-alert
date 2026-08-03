@@ -80,10 +80,13 @@ jobs:
       #  จะแก้ไม่ได้เลย แต่ถ้า commit เข้า repo จะกดแก้ผ่านเว็บ GitHub ได้
       #  แล้วเปิดดูสถิติย้อนหลังว่าระบบเตือนแม่นกี่ %
       # ---------------------------------------------------------------
+      #  radar_watch.csv จดค่าเรดาร์ทุกรอบ (~72 แถว/วัน) ไม่ว่าจะเตือนหรือไม่
+      #  ต้อง commit เหมือนกัน เพราะเป็นข้อมูลที่ใช้จูนเกณฑ์ ถ้าเก็บใน cache
+      #  จะโหลดมาดูไม่ได้ และหายเมื่อ cache หมดอายุ
       - name: บันทึกประวัติการเตือนเข้า repo
         if: always()
         run: |
-          if [ ! -f alert_log.csv ]; then
+          if [ ! -f alert_log.csv ] && [ ! -f radar_watch.csv ]; then
             echo "ไม่มีรายการใหม่ ข้ามขั้นตอนนี้"
             exit 0
           fi
@@ -94,10 +97,19 @@ jobs:
           # ดึงของใหม่ก่อน เผื่อคุณเพิ่งแก้ไฟล์ผ่านเว็บ จะได้ไม่ชนกัน
           git pull --rebase --autostash origin ${{ github.ref_name }} || true
 
-          git add alert_log.csv
+          # -- ต่อท้ายชื่อไฟล์ที่มีจริงเท่านั้น กัน git add พังเพราะไฟล์ยังไม่เกิด
+          FILES=""
+          [ -f alert_log.csv ]   && FILES="$FILES alert_log.csv"
+          [ -f radar_watch.csv ] && FILES="$FILES radar_watch.csv"
+          git add $FILES
+
           if git diff --staged --quiet; then
             echo "ไม่มีอะไรเปลี่ยน"
           else
-            git commit -m "log: บันทึกการเตือน $(date -u -d '+7 hours' '+%Y-%m-%d %H:%M') น."
-            git push origin HEAD:${{ github.ref_name }}
+            git commit -m "log: บันทึกค่าที่วัดได้ $(date -u -d '+7 hours' '+%Y-%m-%d %H:%M') น."
+            # push ชนกันได้ถ้ารอบก่อนยังค้าง — ลองใหม่อีกครั้งหลัง rebase
+            git push origin HEAD:${{ github.ref_name }} || {
+              git pull --rebase --autostash origin ${{ github.ref_name }}
+              git push origin HEAD:${{ github.ref_name }}
+            }
           fi

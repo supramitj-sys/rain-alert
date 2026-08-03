@@ -35,9 +35,12 @@
 import csv
 import sys
 import os
+from datetime import datetime
 from collections import Counter, defaultdict
 
 LOG = sys.argv[1] if len(sys.argv) > 1 else "alert_log.csv"
+WATCH = "radar_watch.csv"     # ค่าที่ระบบจดทุก 20 นาที (ไม่ต้องกรอกมือ)
+RAIN_TIMES = "rain_times.txt"  # ช่วงเวลาที่ฝนตกจริง — ไฟล์เดียวที่ต้องกรอกเอง
 
 # โครงคอลัมน์ทุกเวอร์ชันที่เคยมี — คีย์คือจำนวนคอลัมน์
 LAYOUTS = {
@@ -140,15 +143,149 @@ def score(rows, mm_th, prob_th, agree_th):
     return tp, fp, fn, tn
 
 
+def fbeta(prec, rec, beta=2.0):
+    """
+    คะแนนรวมที่ให้น้ำหนัก "ไม่พลาด" มากกว่า "ไม่เตือนเกิน"
+
+    ใช้ beta=2 คือถือว่าการพลาดฝนจริง (FN) แย่กว่าการเตือนผิด (FP) 2 เท่า
+    เพราะงานก่อสร้าง: เตือนเกิน = เสียเวลาเก็บของรอบเดียว
+                      พลาดฝน   = ปูนเสีย งานเสีย เครื่องมือเปียก คนเปียก
+    ถ้าใช้ F1 (น้ำหนักเท่ากัน) ระบบจะเลือกเกณฑ์ที่เข้มเกินไปจนพลาดของจริง
+    """
+    if not (prec + rec):
+        return 0.0
+    b2 = beta * beta
+    return (1 + b2) * prec * rec / (b2 * prec + rec)
+
+
 def summarize(tp, fp, fn, tn):
     prec = tp / (tp + fp) if (tp + fp) else 0      # เตือนแล้วถูกกี่ %
     rec = tp / (tp + fn) if (tp + fn) else 0       # ฝนจริงจับได้กี่ %
-    f1 = 2 * prec * rec / (prec + rec) if (prec + rec) else 0
-    return prec, rec, f1
+    return prec, rec, fbeta(prec, rec)
 
 
 def section(title):
     print(f"\n[ {title} ]")
+
+
+# =====================================================================
+#  จูนเกณฑ์เรดาร์จาก radar_watch.csv + rain_times.txt
+# =====================================================================
+
+def load_rain_times(path):
+    """
+    อ่านไฟล์ที่จดว่าฝนตกจริงช่วงไหน
+
+    รูปแบบ 2 แบบ บรรทัดละ 1 รายการ:
+      2026-08-04 14:20 15:10   = วันนั้นฝนตกช่วง 14:20-15:10
+      2026-08-05 -             = วันนั้นเฝ้าดูแล้ว ไม่มีฝนเลย
+
+    คืน (ช่วงที่ฝนตก, วันที่เฝ้าดู)
+
+    ทำไมต้องมีบรรทัด "-" ด้วย: ถ้าไม่มี เราจะแยกไม่ออกระหว่าง "วันนั้นไม่มีฝน"
+    กับ "วันนั้นลืมจด" แล้ววันที่ลืมจดจะถูกนับเป็นไม่มีฝนทั้งวัน
+    ทำให้สถิติเพี้ยนหนักโดยไม่มีใครรู้ตัว
+    จึงวิเคราะห์เฉพาะวันที่ปรากฏในไฟล์นี้เท่านั้น วันอื่นข้ามไปทั้งหมด
+    """
+    if not os.path.exists(path):
+        return None, None
+    spans, days = [], set()
+    with open(path, encoding="utf-8-sig") as f:
+        for ln, line in enumerate(f, 1):
+            line = line.split("#")[0].strip()
+            if not line:
+                continue
+            p = line.split()
+            try:
+                day = datetime.strptime(p[0], "%Y-%m-%d").date()
+            except ValueError:
+                print(f"  ⚠️ {path} บรรทัด {ln}: วันที่ผิดรูปแบบ -> {line}")
+                continue
+            days.add(day)
+            if len(p) >= 3 and p[1] != "-":
+                try:
+                    a = datetime.strptime(f"{p[0]} {p[1]}", "%Y-%m-%d %H:%M")
+                    b = datetime.strptime(f"{p[0]} {p[2]}", "%Y-%m-%d %H:%M")
+                    spans.append((a, b))
+                except ValueError:
+                    print(f"  ⚠️ {path} บรรทัด {ln}: เวลาผิดรูปแบบ -> {line}")
+    return spans, days
+
+
+def tune_radar():
+    """หาจุดตัด % ที่แยกฝนจริงออกจากฝนหลอกได้ดีที่สุด"""
+    if not os.path.exists(WATCH):
+        return
+    spans, days = load_rain_times(RAIN_TIMES)
+
+    with open(WATCH, encoding="utf-8-sig", newline="") as f:
+        obs = list(csv.DictReader(f))
+    if not obs:
+        return
+
+    section(f"จูนเกณฑ์เรดาร์จาก {WATCH} ({len(obs)} จุดสังเกต)")
+
+    if spans is None:
+        print(f"  ยังไม่มีไฟล์ {RAIN_TIMES} — ระบบจดค่าไว้ให้แล้ว {len(obs)} จุด")
+        print(f"  แต่ยังไม่รู้ว่าฝนตกจริงตอนไหน สร้างไฟล์ {RAIN_TIMES} แล้วจดแบบนี้:")
+        print("      2026-08-04 14:20 15:10     <- ฝนตกช่วงนี้")
+        print("      2026-08-05 -               <- วันนี้เฝ้าดูแล้ว ไม่มีฝน")
+        return
+    if not days:
+        print(f"  {RAIN_TIMES} ยังว่างอยู่ — ยังจับคู่กับอะไรไม่ได้")
+        return
+
+    rows = []
+    for o in obs:
+        try:
+            t = datetime.strptime(o["เวลา"], "%Y-%m-%d %H:%M")
+        except (ValueError, KeyError):
+            continue
+        if t.date() not in days:
+            continue                       # วันที่ไม่ได้เฝ้าดู ข้ามทั้งหมด
+        cov = _f(o.get("เรดาร์คลุมวงแคบ(%)"), -1)
+        if cov < 0:
+            continue
+        rows.append((cov, any(a <= t <= b for a, b in spans)))
+
+    if not rows:
+        print("  ยังไม่มีจุดสังเกตที่ตรงกับวันที่จดไว้")
+        return
+
+    wet = sum(1 for _, r in rows if r)
+    print(f"  ใช้ได้ {len(rows)} จุด จาก {len(days)} วันที่เฝ้าดู "
+          f"| อยู่ในช่วงฝนตกจริง {wet} จุด ({wet/len(rows)*100:.0f}%)")
+    if wet < 5:
+        print("  ⚠️ จุดที่ฝนตกจริงยังน้อยเกินไป เก็บต่ออีกหน่อยก่อนเชื่อผล")
+
+    print(f"\n  {'ถ้าตั้งเกณฑ์ที่':>14} │ {'เตือน':>5} {'ถูก':>4} {'ผิด':>4} {'พลาด':>5} │"
+          f" {'แม่น%':>6} {'จับได้%':>7} {'คะแนน':>6}")
+    print("  " + "─" * 66)
+    best = None
+    for th in (2, 5, 10, 15, 20, 25, 30, 40, 50, 60):
+        tp = sum(1 for c, r in rows if c >= th and r)
+        fp = sum(1 for c, r in rows if c >= th and not r)
+        fn = sum(1 for c, r in rows if c < th and r)
+        prec = tp / (tp + fp) if (tp + fp) else 0
+        rec = tp / (tp + fn) if (tp + fn) else 0
+        sc = fbeta(prec, rec)
+        if best is None or sc > best[0]:
+            best = (sc, th, tp, fp, fn, prec, rec)
+        mark = ""
+        print(f"  {th:>13}% │ {tp+fp:5d} {tp:4d} {fp:4d} {fn:5d} │"
+              f" {prec*100:5.0f}% {rec*100:6.0f}% {sc:6.2f}{mark}")
+    print("  (คะแนนให้น้ำหนัก 'ไม่พลาดฝนจริง' มากกว่า 'ไม่เตือนเกิน' 2 เท่า)")
+
+    if best and best[0] > 0:
+        f1, th, tp, fp, fn, prec, rec = best
+        print(f"\n  → ตั้ง RADAR_OVER_COVERAGE = {th/100:.2f}  (คือ {th}%)")
+        print(f"     ในไฟล์ rain_alert_telegram.py")
+        print(f"     ที่เกณฑ์นี้: เตือน {tp+fp} ครั้ง ถูก {tp} ผิด {fp} พลาด {fn}")
+        print(f"     เตือนแล้วถูก {prec*100:.0f}% · ฝนจริงจับได้ {rec*100:.0f}%")
+        print("\n     ถ้างานคุณกลัวพลาดมากกว่ากลัวรำคาญ ให้เลือกแถวที่ 'จับได้%'")
+        print("     สูงกว่านี้ แล้วยอมรับตัวเลข 'ผิด' ที่มากขึ้น")
+    else:
+        print("\n  ยังหาจุดตัดที่ใช้ได้ไม่เจอ — เก็บข้อมูลต่ออีกสักพัก")
 
 
 def main():
@@ -282,6 +419,9 @@ def main():
         section("ยังหาเกณฑ์ฝนที่ดีกว่าเดิมไม่ได้")
         print("  ไม่มีชุดเกณฑ์ไหนจับฝนจริงได้เลยในข้อมูลชุดนี้ แปลว่าฝนที่ตกจริง")
         print("  ไม่ได้ถูกโมเดลทำนายไว้ล่วงหน้า — ต้องพึ่งเรดาร์เป็นหลัก ไม่ใช่โมเดล")
+
+    # ---------- จูนเกณฑ์เรดาร์จากสมุดจดค่า ----------
+    tune_radar()
 
     print("\n  ⚠️ ดูช่อง 'พลาด' ด้วย ไม่ใช่แค่ 'ผิด'")
     print("     เกณฑ์ที่เข้มจนไม่เตือนอะไรเลยจะดูแม่น 100% แต่ไร้ประโยชน์")

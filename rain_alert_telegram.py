@@ -184,6 +184,26 @@ REQUIRE_RAIN_EVIDENCE = True
 STATE_FILE = "rain_alert_state.json"
 ALERT_LOG = "alert_log.csv"   # บันทึกทุกการเตือน ไว้ตรวจย้อนหลังว่าแม่นแค่ไหน
 
+# ---------------------------------------------------------------------
+#  สมุดจดค่าเรดาร์ — บันทึก "ทุกรอบที่รัน" ไม่ใช่เฉพาะตอนเตือน
+# ---------------------------------------------------------------------
+#  ปัญหาที่ต้องแก้: alert_log.csv บันทึกเฉพาะตอนระบบคิดจะเตือน พอรัดเกณฑ์
+#  ให้เข้มขึ้น ระบบก็เตือนน้อยลง เขียน log น้อยลง จนไม่เหลือข้อมูลให้จูน
+#  และถ้าเกณฑ์เข้มเกินจนพลาดฝนจริง จะไม่มีอะไรบันทึกไว้ให้รู้เลย
+#  = ยิ่งตั้งเข้ม ยิ่งมองไม่เห็นความผิดพลาดของตัวเอง
+#
+#  ไฟล์นี้จึงจดค่าที่วัดได้ทุก 20 นาทีตลอดวัน (~72 แถว/วัน) โดยไม่ส่งข้อความ
+#  ไม่มีช่องให้กรอกมือ เพราะกรอก 72 แถว/วันเป็นไปไม่ได้ — ผลจริงมาจาก
+#  rain_times.txt ที่จดแค่ "ฝนตกช่วงไหน" แล้ว analyze_alerts.py จับคู่ให้เอง
+# ---------------------------------------------------------------------
+WATCH_LOG = "radar_watch.csv"
+WATCH_COLUMNS = ["เวลา", "เรดาร์คลุมวงแคบ(%)", "เรดาร์คลุมวงกว้าง(%)",
+                 "ตัดสินว่าฝนตกเหนือจุดนี้", "ฝนเข้าใน30นาที",
+                 "ฝนที่ทำนาย(มม./ชม.)", "โอกาสฝน(%)", "โมเดลตรงกัน",
+                 "จำนวนโมเดล", "TMD_WRF(มม.)", "CAPE",
+                 "ความกดอากาศเปลี่ยน(hPa)", "ระดับที่จะเตือน", "ทริกเกอร์",
+                 "ส่งจริง"]
+
 
 # ระดับความรุนแรง — ใช้ตัดสินว่าจะเตือนซ้ำหรือปลุกกลางดึกไหม
 #  "radar_soon" เคยตกหล่นจากตารางนี้ ทำให้ได้ rank 0 เท่ากับ "clear"
@@ -443,6 +463,46 @@ def log_alert(severity, forecast, radar, sent, triggers=None):
                         "yes" if sent else "no", ""])
     except Exception as e:
         print(f"  บันทึก log ไม่ได้: {e}")
+
+
+def watch_log(forecast, radar, severity, triggers, sent, slp_delta):
+    """
+    จดค่าที่วัดได้ลง radar_watch.csv ทุกรอบที่รัน ไม่ว่าจะเตือนหรือไม่
+
+    เรียกก่อนที่ main() จะ return ทุกทางออก เพราะรอบที่ "ไม่เตือน" คือรอบที่
+    มีค่าที่สุดในการจูน — ถ้าฝนตกจริงในรอบที่ระบบเงียบ นั่นคือการพลาด
+    ซึ่งเป็นสิ่งเดียวที่ alert_log.csv บอกเราไม่ได้เลย
+    """
+    try:
+        import csv, os as _os
+        det = (radar or {}).get("rain_detected") or {}
+        f = forecast or []
+        capes = [x["cape"] for x in f if x.get("cape") is not None]
+        tmds = [x.get("tmd_mm") for x in f if x.get("tmd_mm") is not None]
+        new = not _os.path.exists(WATCH_LOG)
+        with open(WATCH_LOG, "a", newline="", encoding="utf-8-sig") as fp:
+            w = csv.writer(fp)
+            if new:
+                w.writerow(WATCH_COLUMNS)
+            w.writerow([
+                f"{now_th():%Y-%m-%d %H:%M}",
+                f"{det.get('cover_over', 0) * 100:.0f}" if det else "",
+                f"{det.get('cover_near', 0) * 100:.0f}" if det else "",
+                "yes" if det.get("now") else "no" if det else "",
+                "yes" if det.get("in_30min") else "no" if det else "",
+                f"{max((x['rain_mm'] for x in f), default=0):.1f}",
+                f"{max((x['prob'] for x in f), default=0):.0f}",
+                max((x["agree"] for x in f), default=0),
+                max((x["n_models"] for x in f), default=0),
+                f"{max(tmds):.1f}" if tmds else "",
+                f"{max(capes):.0f}" if capes else "",
+                f"{slp_delta:.1f}" if slp_delta is not None else "",
+                severity or "",
+                "|".join(triggers or []),
+                "yes" if sent else "no",
+            ])
+    except Exception as e:
+        print(f"  จด radar_watch ไม่ได้: {e}")
 
 
 # =====================================================================
@@ -1328,6 +1388,8 @@ def main():
 
     if text is None:
         print("  → ไม่มีอะไรต้องเตือน ไม่ส่งข้อความ")
+        # จดไว้ด้วยเสมอ — รอบที่เงียบคือรอบที่บอกเราได้ว่าเกณฑ์เข้มเกินไปหรือเปล่า
+        watch_log(forecast, radar, severity, triggers, False, slp_delta)
         return
 
     rank = SEVERITY_RANK.get(severity, 0)
@@ -1337,18 +1399,21 @@ def main():
         print(f"  → อยู่ในช่วงงดรบกวน ({QUIET_START}:00-{QUIET_END}:00) "
               f"และความรุนแรงระดับ {rank} ยังไม่ถึงเกณฑ์ปลุก ({QUIET_MIN_RANK}) ไม่ส่ง")
         log_alert(severity, forecast, radar, sent=False, triggers=triggers)
+        watch_log(forecast, radar, severity, triggers, False, slp_delta)
         return
 
     if not args.force and in_cooldown(state, severity):
         print(f"  → เพิ่งเตือนไปภายใน {COOLDOWN_MINUTES} นาที "
               f"และความรุนแรงไม่ได้เพิ่มขึ้น ไม่ส่งซ้ำ")
         log_alert(severity, forecast, radar, sent=False, triggers=triggers)
+        watch_log(forecast, radar, severity, triggers, False, slp_delta)
         return
 
     print("--- ข้อความ ---")
     print(text)
     ok = send_telegram(text)
     log_alert(severity, forecast, radar, sent=ok, triggers=triggers)
+    watch_log(forecast, radar, severity, triggers, ok, slp_delta)
     if ok:
         state["last_alert_at"] = now_th().isoformat()
         state["last_rank"] = rank
