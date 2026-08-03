@@ -1007,6 +1007,234 @@ def fetch_tide_clash(forecast):
 #  ประกอบข้อความแจ้งเตือน
 # =====================================================================
 
+# =====================================================================
+#  สรุปอากาศประจำวัน — คนละเรื่องกับการเตือน
+# =====================================================================
+#  การเตือนตอบคำถาม "ตอนนี้ต้องรีบทำอะไรไหม" มองล่วงหน้า 3 ชม.
+#  สรุปเช้าตอบคำถาม "วันนี้จะวางแผนงานยังไง" ต้องมองทั้งวัน
+#  ข้อมูลคนละชุดกัน จึงแยกฟังก์ชันดึงและฟังก์ชันประกอบข้อความออกจากกัน
+#  ไม่เอาไปปนกับ build_message() ที่ต้องเงียบให้มากที่สุด
+# =====================================================================
+
+THAI_DAYS = ["จันทร์", "อังคาร", "พุธ", "พฤหัสบดี", "ศุกร์", "เสาร์", "อาทิตย์"]
+THAI_MONTHS = ["ม.ค.", "ก.พ.", "มี.ค.", "เม.ย.", "พ.ค.", "มิ.ย.",
+               "ก.ค.", "ส.ค.", "ก.ย.", "ต.ค.", "พ.ย.", "ธ.ค."]
+
+# รหัสสภาพอากาศ WMO ที่ Open-Meteo ใช้ (เอาเฉพาะที่เจอได้จริงในไทย)
+WMO_TEXT = {
+    0: "ฟ้าโปร่ง", 1: "ฟ้าโปร่งเป็นส่วนใหญ่", 2: "มีเมฆบางส่วน", 3: "เมฆมาก",
+    45: "หมอก", 48: "หมอกน้ำค้างแข็ง",
+    51: "ฝนละอองเบา", 53: "ฝนละออง", 55: "ฝนละอองหนัก",
+    61: "ฝนเล็กน้อย", 63: "ฝนปานกลาง", 65: "ฝนหนัก",
+    80: "ฝนซู่เล็กน้อย", 81: "ฝนซู่", 82: "ฝนซู่หนัก",
+    95: "ฝนฟ้าคะนอง", 96: "ฝนฟ้าคะนองมีลูกเห็บ", 99: "ฝนฟ้าคะนองรุนแรง",
+}
+
+
+def thai_date(d):
+    """3 ส.ค. 2569 (พ.ศ.) — ปฏิทินไทยใช้ปีพุทธศักราช = ค.ศ. + 543"""
+    return f"{THAI_DAYS[d.weekday()]} {d.day} {THAI_MONTHS[d.month-1]} {d.year + 543}"
+
+
+def fetch_day_outlook():
+    """
+    ดึงภาพรวมทั้งวันสำหรับสรุปตอนเช้า
+
+    ใช้โมเดลรวมของ Open-Meteo (best_match) ตัวเดียว ไม่ทำ consensus หลายโมเดล
+    เพราะสรุปเช้าไม่ได้ตัดสินใจอะไรแทนคน แค่บอกภาพรวมให้วางแผนงาน
+    ความเรียบง่ายและไม่พังสำคัญกว่าความละเอียดตรงนี้
+
+    คืน dict หรือ None
+    """
+    try:
+        r = requests.get("https://api.open-meteo.com/v1/forecast", timeout=30, params={
+            "latitude": LAT, "longitude": LON, "timezone": "Asia/Bangkok",
+            "forecast_days": 1,
+            "daily": ("weather_code,temperature_2m_max,temperature_2m_min,"
+                      "apparent_temperature_max,precipitation_sum,"
+                      "precipitation_probability_max,wind_speed_10m_max,"
+                      "wind_gusts_10m_max,wind_direction_10m_dominant,"
+                      "uv_index_max,sunrise,sunset"),
+            "hourly": "precipitation,precipitation_probability,cloud_cover",
+        })
+        r.raise_for_status()
+        data = r.json()
+    except Exception as e:
+        print(f"ดึงภาพรวมรายวันไม่ได้: {e}")
+        return None
+
+    d = data.get("daily") or {}
+    if not d.get("time"):
+        return None
+
+    def first(key, default=None):
+        v = d.get(key) or []
+        return v[0] if v and v[0] is not None else default
+
+    h = data.get("hourly") or {}
+    hours = []
+    for i, t in enumerate(h.get("time") or []):
+        try:
+            dt = datetime.fromisoformat(t)
+        except Exception:
+            continue
+
+        def at(key):
+            arr = h.get(key) or []
+            return arr[i] if i < len(arr) and arr[i] is not None else None
+
+        hours.append({"time": dt, "rain": at("precipitation") or 0,
+                      "prob": at("precipitation_probability") or 0,
+                      "cloud": at("cloud_cover")})
+
+    return {
+        "date": datetime.fromisoformat(d["time"][0]),
+        "code": first("weather_code"),
+        "tmax": first("temperature_2m_max"), "tmin": first("temperature_2m_min"),
+        "feels": first("apparent_temperature_max"),
+        "rain_sum": first("precipitation_sum", 0) or 0,
+        "rain_prob": first("precipitation_probability_max", 0) or 0,
+        "wind": first("wind_speed_10m_max", 0) or 0,
+        "gust": first("wind_gusts_10m_max", 0) or 0,
+        "wind_dir": first("wind_direction_10m_dominant"),
+        "uv": first("uv_index_max"),
+        "sunrise": first("sunrise"), "sunset": first("sunset"),
+        "hours": hours,
+    }
+
+
+def rain_windows(hours, prob_min=50, mm_min=0.2):
+    """
+    รวมชั่วโมงที่น่าจะมีฝนให้เป็น "ช่วง" แทนที่จะไล่ทีละชั่วโมง
+
+    คนอ่าน "บ่าย 2 ถึง 4 โมง" เข้าใจทันที แต่ "14:00, 15:00, 16:00"
+    ต้องแปลในหัวอีกที — ข้อความตอนเช้าควรอ่านจบในครั้งเดียว
+    """
+    wet = [h for h in hours if h["prob"] >= prob_min or h["rain"] >= mm_min]
+    out = []
+    for h in sorted(wet, key=lambda x: x["time"]):
+        if out and (h["time"] - out[-1][-1]["time"]).total_seconds() <= 3600:
+            out[-1].append(h)
+        else:
+            out.append([h])
+    return out
+
+
+#  ช่วงเวลาทำงานกลางแจ้ง ใช้ตัดสินว่าฝนช่วงนั้นกระทบงานจริงไหม
+WORK_START, WORK_END = 7, 17
+
+
+def build_daily_summary(day, tmd_warning=None):
+    """ประกอบข้อความสรุปอากาศประจำวัน — คืน str"""
+    # ตัดชั่วโมงที่ผ่านไปแล้วออกก่อนทุกอย่าง
+    # ไม่งั้นสรุปตอน 07:00 จะรายงานฝนที่ตกไปแล้วตอนตี 2 ว่ากำลังจะมา
+    now = now_th().replace(tzinfo=None)
+    day = dict(day)
+    day["hours"] = [h for h in day["hours"] if h["time"] >= now - timedelta(hours=1)]
+
+    L = []
+    L.append(f"🌤️ <b>สรุปอากาศวันนี้ · {PLACE_NAME}</b>")
+    L.append(f"{thai_date(day['date'])}\n")
+
+    if day["code"] is not None:
+        desc = WMO_TEXT.get(day["code"], f"รหัสสภาพอากาศ {day['code']}")
+        L.append(f"📖 ภาพรวม: {desc}")
+
+    # --- แดดกับเมฆ (ดูเฉพาะช่วงเวลาทำงาน 07-17 น.) ---
+    work = [h for h in day["hours"] if 7 <= h["time"].hour <= 17 and h["cloud"] is not None]
+    if work:
+        avg = sum(h["cloud"] for h in work) / len(work)
+        if avg < 30:
+            sun = "แดดจัดเกือบทั้งวัน ☀️"
+        elif avg < 60:
+            sun = "แดดสลับเมฆ ⛅"
+        elif avg < 85:
+            sun = "เมฆมาก แดดน้อย ☁️"
+        else:
+            sun = "ครึ้มทั้งวัน แทบไม่มีแดด 🌥️"
+        L.append(f"☀️ แดด: {sun} (เมฆเฉลี่ย {avg:.0f}%)")
+
+    # --- อุณหภูมิ ---
+    if day["tmin"] is not None and day["tmax"] is not None:
+        t = f"🌡️ อุณหภูมิ {day['tmin']:.0f}–{day['tmax']:.0f}°C"
+        if day["feels"] is not None and day["feels"] - day["tmax"] >= 2:
+            t += f" (รู้สึกเหมือน {day['feels']:.0f}°C)"
+        L.append(t)
+
+    # --- ฝน ---
+    wins = rain_windows(day["hours"])
+    # โอกาสฝนต้องคิดจากชั่วโมงที่ "เหลือของวัน" ไม่ใช่ค่าสูงสุดทั้งวันที่ API ให้มา
+    # เพราะค่านั้นรวมชั่วโมงที่ผ่านไปแล้ว ทำให้ได้ข้อความขัดกันเองแบบ
+    # "ไม่มีช่วงฝนชัดเจน แต่โอกาสฝน 85%" ทั้งที่ 85% นั้นคือฝนที่ตกไปแล้วตอนตี 2
+    prob_left = max((h["prob"] for h in day["hours"]), default=0)
+    if wins:
+        parts = []
+        for w in wins[:3]:
+            a, b = w[0]["time"], w[-1]["time"] + timedelta(hours=1)
+            mm = sum(x["rain"] for x in w)
+            pk = max(x["prob"] for x in w)
+            parts.append(f"{a:%H:%M}–{b:%H:%M} ({mm:.1f} มม. · โอกาส {pk:.0f}%)")
+        L.append("🌧️ ฝน: " + " และ ".join(parts))
+    elif prob_left >= 30:
+        L.append(f"🌧️ ฝน: ไม่มีช่วงชัดเจน แต่โอกาสฝนที่เหลือของวัน {prob_left:.0f}%")
+    else:
+        L.append(f"🌧️ ฝน: ไม่มีสัญญาณฝน (โอกาสสูงสุด {prob_left:.0f}%)")
+
+    # --- ลม ---
+    wind = f"💨 ลม {day['wind']:.0f} กม./ชม."
+    wc = wind_compass(day["wind_dir"])
+    if wc:
+        wind += f" จากทิศ{wc['from_th']} ({wc['from_code']}) {wc['arrow']}"
+    if day["gust"]:
+        wind += f" · กระโชกสูงสุด {day['gust']:.0f}"
+    L.append(wind)
+
+    # --- UV กับเวลาพระอาทิตย์ ---
+    if day["uv"] is not None:
+        uv = day["uv"]
+        lvl = ("ต่ำ" if uv < 3 else "ปานกลาง" if uv < 6 else
+               "สูง" if uv < 8 else "สูงมาก" if uv < 11 else "อันตราย")
+        L.append(f"🕶️ UV สูงสุด {uv:.0f} ({lvl})")
+    if day["sunrise"] and day["sunset"]:
+        try:
+            sr = datetime.fromisoformat(day["sunrise"])
+            ss = datetime.fromisoformat(day["sunset"])
+            L.append(f"🌅 พระอาทิตย์ขึ้น {sr:%H:%M} · ตก {ss:%H:%M}")
+        except Exception:
+            pass
+
+    if tmd_warning:
+        L.append(f"\n⚠️ <b>ประกาศเตือนภัยกรมอุตุฯ</b>\n{tmd_warning}")
+
+    # --- คำแนะนำสำหรับงาน — ให้เฉพาะที่ตรงกับสภาพวันนี้จริง ๆ ---
+    tips = []
+    if wins:
+        a = wins[0][0]["time"]
+        # ฝนหลังเลิกงานไม่ต้องสั่งให้รีบทำงานให้เสร็จก่อน — คำแนะนำต้องตรงบริบท
+        # ไม่งั้นคนอ่านจะเริ่มไม่เชื่อถือข้อความทั้งฉบับ
+        if a.hour < WORK_END:
+            if a.hour <= WORK_START:
+                tips.append("ฝนมาตั้งแต่เช้า — เลื่อนงานเทปูน/งานสีไปช่วงบ่ายถ้าทำได้")
+            else:
+                tips.append(f"วางงานเทปูน/งานสีให้เสร็จก่อน {a:%H:%M} น.")
+            tips.append("เตรียมผ้าใบคลุมวัสดุและกองทรายไว้ล่วงหน้า")
+        else:
+            tips.append(f"ฝนมาช่วง {a:%H:%M} น. หลังเลิกงานแล้ว "
+                        f"งานกลางวันไม่กระทบ — คลุมของให้เรียบร้อยก่อนกลับ")
+    if day["gust"] and day["gust"] >= GUST_ALERT:
+        tips.append(f"ลมกระโชกถึง {day['gust']:.0f} กม./ชม. — ระวังงานนั่งร้าน เครน ผ้าใบ")
+    if day["feels"] is not None and day["feels"] >= HEAT_ALERT:
+        tips.append(f"อากาศร้อนจัด (รู้สึก {day['feels']:.0f}°C) — เพิ่มรอบพัก เตรียมน้ำดื่ม")
+    if day["uv"] is not None and day["uv"] >= 8:
+        tips.append("UV สูง — ใส่แขนยาว หมวก และครีมกันแดดสำหรับคนงานกลางแจ้ง")
+    if not tips:
+        tips.append("สภาพอากาศเอื้อต่อการทำงานกลางแจ้ง ไม่มีข้อควรระวังพิเศษ")
+    L.append("\n📋 <b>สำหรับงานวันนี้</b>\n" + "\n".join(f"• {t}" for t in tips))
+
+    L.append("\n<i>ที่มา: Open-Meteo / กรมอุตุนิยมวิทยา</i>")
+    return "\n".join(L)
+
+
 def build_message(forecast, radar, warning, always_send=False, tide_clash=None,
                   persistence_ok=True, slp_delta=None, slp_span=0):
     """
@@ -1305,12 +1533,30 @@ def main():
     ap.add_argument("--test", action="store_true",
                     help="ส่งข้อความทดสอบเข้า Telegram แล้วจบ")
     ap.add_argument("--force", action="store_true",
-                    help="ส่งข้อความเสมอ แม้ไม่มีฝน และข้าม cooldown (ใช้กับสรุปประจำวัน)")
+                    help="ส่งข้อความเสมอ แม้ไม่มีฝน และข้าม cooldown")
+    ap.add_argument("--daily", action="store_true",
+                    help="ส่งสรุปอากาศทั้งวัน (ใช้กับงานตอนเช้า 07:00 น.)")
     args = ap.parse_args()
 
     if args.test:
         ok = send_telegram("✅ ทดสอบระบบเตือนฝนบางปะกง — เชื่อมต่อ Telegram สำเร็จแล้ว")
         sys.exit(0 if ok else 1)
+
+    # -----------------------------------------------------------------
+    #  โหมดสรุปประจำวัน — จบในตัว ไม่แตะ cooldown/state ของฝั่งเตือน
+    #  เพราะสรุปเช้าไม่ใช่การเตือน ไม่ควรไปกิน cooldown จนการเตือนจริง
+    #  ในชั่วโมงถัดมาถูกกดทิ้ง
+    # -----------------------------------------------------------------
+    if args.daily:
+        print(f"[{now_th():%Y-%m-%d %H:%M:%S}] สรุปอากาศประจำวัน {PLACE_NAME}")
+        day = fetch_day_outlook()
+        if not day:
+            print("  ดึงข้อมูลไม่ได้ ไม่ส่ง")
+            sys.exit(1)
+        text = build_daily_summary(day, fetch_tmd_warning())
+        print("--- ข้อความ ---")
+        print(text)
+        sys.exit(0 if send_telegram(text) else 1)
 
     print(f"[{now_th():%Y-%m-%d %H:%M:%S}] เริ่มเช็คสภาพอากาศ {PLACE_NAME} ({LAT}, {LON})")
 
