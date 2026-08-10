@@ -103,3 +103,4 @@
 2026-08-09 22:24,radar_now,radar_now|pressure,0.0,41,0,4,0.0,yes,47,50,no,
 2026-08-10 02:28,radar_now,radar_now,0.0,32,0,4,0.0,yes,35,16,no,
 2026-08-10 08:14,gust,gust,0.0,72,1,4,0.0,no,0,0,yes,
+2026-08-10 10:47,radar_now,radar_now|gust|pressure,0.2,82,0,4,0.0,yes,75,6,yes,
