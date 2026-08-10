@@ -100,3 +100,4 @@
 2026-08-10 12:20,4,12,no,no,0.0,92,0,4,0.0,1910,-2.4,gust,gust|pressure,no
 2026-08-10 14:18,51,57,yes,no,0.3,99,0,4,0.0,2070,-0.5,radar_now,radar_now|gust,yes
 2026-08-10 16:11,88,87,yes,no,0.0,100,1,4,2.0,1610,2.6,radar_now,radar_now|gust,no
+2026-08-10 18:02,100,99,yes,no,0.0,100,1,4,2.0,1610,2.5,radar_now,radar_now,yes
