@@ -198,11 +198,23 @@ ALERT_LOG = "alert_log.csv"   # บันทึกทุกการเตือ
 # ---------------------------------------------------------------------
 WATCH_LOG = "radar_watch.csv"
 WATCH_COLUMNS = ["เวลา", "เรดาร์คลุมวงแคบ(%)", "เรดาร์คลุมวงกว้าง(%)",
-                 "ตัดสินว่าฝนตกเหนือจุดนี้", "ฝนเข้าใน30นาที",
-                 "ฝนที่ทำนาย(มม./ชม.)", "โอกาสฝน(%)", "โมเดลตรงกัน",
-                 "จำนวนโมเดล", "TMD_WRF(มม.)", "CAPE",
+                 "ตัดสินว่าฝนตกเหนือจุดนี้", "ฝนเข้าใน30นาที", "อีกกี่นาทีฝนถึง",
+                 "ฝนที่ทำนาย(มม./ชม.)", "ฝนสูงสุดที่โมเดลใดเห็น(มม./ชม.)",
+                 "โอกาสฝน(%)", "โมเดลตรงกัน", "จำนวนโมเดล", "TMD_WRF(มม.)",
+                 "ลมกระโชก(กม./ชม.)", "CAPE",
                  "ความกดอากาศเปลี่ยน(hPa)", "ระดับที่จะเตือน", "ทริกเกอร์",
                  "ส่งจริง"]
+
+# สคีมาเก่าของ radar_watch.csv — อ้างด้วยจำนวนคอลัมน์เหมือน alert_log.csv
+# บทเรียนเดิม: เพิ่มคอลัมน์แล้วไม่เขียนหัวตารางใหม่ = อ่านไฟล์เพี้ยนทั้งไฟล์
+WATCH_LEGACY = {
+    15: ["เวลา", "เรดาร์คลุมวงแคบ(%)", "เรดาร์คลุมวงกว้าง(%)",
+         "ตัดสินว่าฝนตกเหนือจุดนี้", "ฝนเข้าใน30นาที",
+         "ฝนที่ทำนาย(มม./ชม.)", "โอกาสฝน(%)", "โมเดลตรงกัน",
+         "จำนวนโมเดล", "TMD_WRF(มม.)", "CAPE",
+         "ความกดอากาศเปลี่ยน(hPa)", "ระดับที่จะเตือน", "ทริกเกอร์",
+         "ส่งจริง"],
+}
 
 
 # ระดับความรุนแรง — ใช้ตัดสินว่าจะเตือนซ้ำหรือปลุกกลางดึกไหม
@@ -465,6 +477,35 @@ def log_alert(severity, forecast, radar, sent, triggers=None):
         print(f"  บันทึก log ไม่ได้: {e}")
 
 
+def migrate_watch():
+    """
+    ย้าย radar_watch.csv ให้เข้าโครงคอลัมน์ปัจจุบัน — หลักการเดียวกับ migrate_log()
+    เดาสคีมาจากจำนวนคอลัมน์ของแต่ละแถว ไม่เชื่อหัวตาราง
+    """
+    import csv, os as _os
+    if not _os.path.exists(WATCH_LOG):
+        return
+    with open(WATCH_LOG, encoding="utf-8-sig", newline="") as fp:
+        rows = [r for r in csv.reader(fp) if r]
+    if not rows or rows[0] == WATCH_COLUMNS:
+        return
+
+    out = []
+    for r in rows[1:]:
+        layout = (WATCH_COLUMNS if len(r) == len(WATCH_COLUMNS)
+                  else WATCH_LEGACY.get(len(r)))
+        if layout is None:
+            continue                    # ความกว้างไม่รู้จัก ทิ้งแถวนั้นไป
+        d = dict(zip(layout, r))
+        out.append([d.get(c, "") for c in WATCH_COLUMNS])
+
+    with open(WATCH_LOG, "w", newline="", encoding="utf-8-sig") as fp:
+        w = csv.writer(fp)
+        w.writerow(WATCH_COLUMNS)
+        w.writerows(out)
+    print(f"  ย้ายโครงคอลัมน์ radar_watch.csv เป็นเวอร์ชันใหม่แล้ว ({len(out)} แถว)")
+
+
 def watch_log(forecast, radar, severity, triggers, sent, slp_delta):
     """
     จดค่าที่วัดได้ลง radar_watch.csv ทุกรอบที่รัน ไม่ว่าจะเตือนหรือไม่
@@ -475,10 +516,12 @@ def watch_log(forecast, radar, severity, triggers, sent, slp_delta):
     """
     try:
         import csv, os as _os
+        migrate_watch()
         det = (radar or {}).get("rain_detected") or {}
         f = forecast or []
         capes = [x["cape"] for x in f if x.get("cape") is not None]
         tmds = [x.get("tmd_mm") for x in f if x.get("tmd_mm") is not None]
+        eta = det.get("eta_min")
         new = not _os.path.exists(WATCH_LOG)
         with open(WATCH_LOG, "a", newline="", encoding="utf-8-sig") as fp:
             w = csv.writer(fp)
@@ -490,11 +533,17 @@ def watch_log(forecast, radar, severity, triggers, sent, slp_delta):
                 f"{det.get('cover_near', 0) * 100:.0f}" if det else "",
                 "yes" if det.get("now") else "no" if det else "",
                 "yes" if det.get("in_30min") else "no" if det else "",
+                eta if eta is not None else "",
                 f"{max((x['rain_mm'] for x in f), default=0):.1f}",
+                f"{max((x.get('rain_max', 0) for x in f), default=0):.1f}",
                 f"{max((x['prob'] for x in f), default=0):.0f}",
                 max((x["agree"] for x in f), default=0),
                 max((x["n_models"] for x in f), default=0),
                 f"{max(tmds):.1f}" if tmds else "",
+                # ลมกระโชกคือทริกเกอร์ที่ยิงมากที่สุดหลังปิด pressure/CAPE
+                # (อยู่ใน 26 จาก 38 ข้อความที่ส่ง) แต่ไม่เคยถูกจดไว้เลย
+                # จึงยังพิสูจน์ไม่ได้ว่าเกณฑ์ 40 กม./ชม. เหมาะสมหรือไม่
+                f"{max((x['gust'] for x in f), default=0):.0f}",
                 f"{max(capes):.0f}" if capes else "",
                 f"{slp_delta:.1f}" if slp_delta is not None else "",
                 severity or "",
@@ -592,6 +641,24 @@ def fetch_forecast():
         rains_sorted = sorted(rains)
         median = rains_sorted[len(rains_sorted) // 2]
 
+        # -------------------------------------------------------------
+        #  "ปริมาณที่โมเดลเห็นตรงกัน" — ตัวเลขที่ใช้ตัดสินใจเตือนจริง
+        # -------------------------------------------------------------
+        #  เดิมใช้ค่ากลาง (median) ซึ่งกับ 4 โมเดลแปลว่าต้องมี 3 ใน 4 ตัว
+        #  เห็นฝนตรงชั่วโมงเดียวกัน ฝนฟ้าคะนองเขตร้อนไม่มีทางเป็นแบบนั้น
+        #  เพราะก้อนเมฆกว้าง 5-10 กม. แต่โมเดลละเอียด 9-13 กม. แต่ละตัว
+        #  วางก้อนคนละที่คนละเวลา
+        #  ผลจริง 12 วัน: ค่ากลางสูงสุดที่เคยได้ = 0.8 มม. ไม่เคยแตะเกณฑ์ 1.0
+        #  เลยสักครั้ง ขณะที่เรดาร์เห็นฝนบนหัวจริง 28% ของเวลา = เกณฑ์ตายสนิท
+        #
+        #  เปลี่ยนเป็น: เรียงจากมากไปน้อยแล้วหยิบตัวที่ MIN_MODEL_AGREE
+        #  ได้ความหมายว่า "มีอย่างน้อย N โมเดลบอกว่าฝนจะตกไม่ต่ำกว่าเท่านี้"
+        #  ซึ่งเป็นสิ่งที่เราอยากรู้จริง ๆ และยังคงกันโมเดลเดี่ยวที่หลุดโด่ง
+        #  ออกไปได้เหมือนเดิม — แก้ที่ "วิธีคิดเลข" ไม่ใช่ลดเกณฑ์ลงเฉย ๆ
+        # -------------------------------------------------------------
+        desc = sorted(rains, reverse=True)
+        rain_agree = desc[min(MIN_MODEL_AGREE, len(desc)) - 1]
+
         probs = vals(prob_keys, i)
         temps = vals(temp_keys, i)
         gusts = vals(gust_keys, i)
@@ -601,9 +668,10 @@ def fetch_forecast():
         out.append({
             "time": dt,
             "tmd_mm": None,      # เติมทีหลังใน merge_tmd()
-            # ใช้ค่ากลาง ไม่ใช่ค่าสูงสุด — โมเดลตัวเดียวที่หลุดโด่งจะไม่ลากทั้งกลุ่ม
-            "rain_mm": median,
-            "rain_max": max(rains),
+            # ค่าที่ใช้ตัดสินใจเตือน = ปริมาณที่อย่างน้อย MIN_MODEL_AGREE โมเดลเห็นตรงกัน
+            "rain_mm": rain_agree,
+            "rain_median": median,      # เก็บไว้เทียบเฉย ๆ ไม่ได้ใช้ตัดสิน
+            "rain_max": max(rains),     # โมเดลที่มองร้ายที่สุดบอกว่าเท่าไร
             "agree": sum(1 for v in rains if v >= RAIN_MM_ALERT),
             "n_models": len(rains),
             "per_model": {k.replace("precipitation_", "") or "default": v
@@ -863,57 +931,94 @@ def check_radar_pixel(radar_info, nowcast, past):
     rad_over = max(2, int(RADAR_OVER_KM / km_per_px))   # วงแคบ = เหนือจุดนี้
     rad_near = max(3, int(RADAR_NEAR_KM / km_per_px))   # วงกว้าง = แถวนี้
 
-    def tile_coverage(path):
-        """คืน (สัดส่วนฝนในวงแคบ, สัดส่วนฝนในวงกว้าง) — วัดทั้งสองวงในรอบเดียว"""
+    def tile_stats(path):
+        """
+        วัดค่าจากภาพ tile หนึ่งเฟรม คืน dict หรือ None ถ้าโหลดไม่ได้
+          cover_over / cover_near : สัดส่วนพื้นที่ที่มีฝนในวงแคบ/วงกว้าง
+          dist_px                 : ระยะจากจุดเราถึง "จุดกึ่งกลางมวลฝน" ในวงกว้าง
+                                    (None ถ้าไม่มีฝนเลย) — ใช้ดูว่าฝนเข้าใกล้ไหม
+        """
         # color scheme 4 = universal blue, smooth=0, snow=0
         url = f"{host}{path}/{TILE_PX}/{ZOOM}/{x}/{y}/4/0_0.png"
         try:
             r = requests.get(url, timeout=20)
             if r.status_code != 200:
-                return 0.0, 0.0
+                return None
             img = Image.open(BytesIO(r.content)).convert("RGBA")
             w, h = img.size
             cx, cy = int(fx * w), int(fy * h)
+            px_map = img.load()
 
             hit_o = tot_o = hit_n = tot_n = 0
-            for px in range(cx - rad_near, cx + rad_near + 1):
-                for py in range(cy - rad_near, cy + rad_near + 1):
-                    if not (0 <= px < w and 0 <= py < h):
+            sum_x = sum_y = 0
+            for ax in range(cx - rad_near, cx + rad_near + 1):
+                for ay in range(cy - rad_near, cy + rad_near + 1):
+                    if not (0 <= ax < w and 0 <= ay < h):
                         continue          # จุดที่ล้นออกนอก tile ข้ามไป
-                    d2 = (px - cx) ** 2 + (py - cy) ** 2
+                    d2 = (ax - cx) ** 2 + (ay - cy) ** 2
                     if d2 > rad_near ** 2:
                         continue          # นับเฉพาะในวงกลม ไม่ใช่สี่เหลี่ยม
-                    wet = img.getpixel((px, py))[3] > RADAR_ALPHA_MIN
+                    wet = px_map[ax, ay][3] > RADAR_ALPHA_MIN
                     tot_n += 1
                     if wet:
                         hit_n += 1
+                        sum_x += ax
+                        sum_y += ay
                     if d2 <= rad_over ** 2:   # วงแคบซ้อนอยู่ในวงกว้าง นับซ้ำได้เลย
                         tot_o += 1
                         if wet:
                             hit_o += 1
-            return (hit_o / tot_o if tot_o else 0.0,
-                    hit_n / tot_n if tot_n else 0.0)
+
+            dist = None
+            if hit_n:
+                gx, gy = sum_x / hit_n, sum_y / hit_n
+                dist = math.hypot(gx - cx, gy - cy)
+            return {
+                "cover_over": hit_o / tot_o if tot_o else 0.0,
+                "cover_near": hit_n / tot_n if tot_n else 0.0,
+                "dist_px": dist,
+            }
         except Exception:
-            return 0.0, 0.0
+            return None
 
     res = {"now": False, "in_30min": False, "near_now": False,
-           "cover_over": 0.0, "cover_near": 0.0}
+           "cover_over": 0.0, "cover_near": 0.0, "eta_min": None}
+    if not past:
+        return res
 
-    if past:
-        co, cn = tile_coverage(past[-1]["path"])
-        res["cover_over"], res["cover_near"] = co, cn
-        res["now"] = co >= RADAR_OVER_COVERAGE
-        res["near_now"] = cn >= RADAR_NEAR_COVERAGE
+    # -----------------------------------------------------------------
+    #  อ่านย้อนหลัง 3 เฟรม เพื่อดูว่าก้อนฝนกำลังเข้าหาเราหรือออกห่าง
+    # -----------------------------------------------------------------
+    #  เดิมใช้เฟรม nowcast ของ RainViewer ตรง ๆ แต่ตรวจสอบแล้วพบว่า
+    #  API สาธารณะไม่ส่งเฟรม nowcast มาให้อีกแล้ว (ได้ 0 เฟรมทุกครั้ง)
+    #  ผลคือการเตือนล่วงหน้า 30 นาทีไม่เคยทำงานเลยสักครั้งใน 191 รอบ
+    #  จึงต้องคำนวณการเคลื่อนที่เอง: ดูว่าจุดกึ่งกลางมวลฝนขยับเข้าใกล้
+    #  จุดเราด้วยความเร็วเท่าไร แล้วประเมินว่าอีกกี่นาทีจะมาถึง
+    # -----------------------------------------------------------------
+    frames = past[-3:]
+    stats = [tile_stats(f["path"]) for f in frames]
+    latest = stats[-1]
+    if latest is None:
+        return res
 
-    if nowcast:
-        # เฟรม nowcast แรก ๆ = อีกประมาณ 10-30 นาทีข้างหน้า
-        # ใช้เกณฑ์วงแคบเหมือนกัน เพราะคำถามคือ "ฝนจะมาถึงจุดนี้ไหม"
-        # ไม่ใช่ "มีฝนอยู่ที่ไหนสักแห่งในภาพไหม"
-        for f in nowcast[:3]:
-            co, _ = tile_coverage(f["path"])
-            if co >= RADAR_OVER_COVERAGE:
-                res["in_30min"] = True
-                break
+    res["cover_over"] = latest["cover_over"]
+    res["cover_near"] = latest["cover_near"]
+    res["now"] = latest["cover_over"] >= RADAR_OVER_COVERAGE
+    res["near_now"] = latest["cover_near"] >= RADAR_NEAR_COVERAGE
+
+    # ระยะห่างเวลาจริงระหว่างเฟรม (RainViewer ให้ unix time มาด้วย)
+    gap_min = 10.0
+    if len(frames) >= 2 and frames[-1].get("time") and frames[-2].get("time"):
+        gap_min = abs(frames[-1]["time"] - frames[-2]["time"]) / 60.0 or 10.0
+
+    ds = [s["dist_px"] for s in stats if s and s["dist_px"] is not None]
+    if (not res["now"]) and res["near_now"] and len(ds) >= 2:
+        # เข้าใกล้ = ระยะลดลง -> speed เป็นบวก (พิกเซลต่อเฟรม)
+        speed = (ds[0] - ds[-1]) / (len(ds) - 1)
+        if speed > 0.3:               # ต่ำกว่านี้ถือว่านิ่ง เป็นสัญญาณรบกวน
+            eta = ds[-1] / speed * gap_min
+            res["eta_min"] = round(eta)
+            res["in_30min"] = eta <= 30
     return res
 
 
@@ -1291,7 +1396,11 @@ def build_message(forecast, radar, warning, always_send=False, tide_clash=None,
             severity = severity or "radar_now"
             triggers.append("radar_now")
         elif rd.get("in_30min"):
-            lines.append(f"📡 <b>เรดาร์: กลุ่มฝนกำลังเข้า{PLACE_NAME}</b> ใน ~30 นาที")
+            eta = rd.get("eta_min")
+            when = f"ใน ~{eta} นาที" if eta else "ใน ~30 นาที"
+            lines.append(f"📡 <b>เรดาร์: กลุ่มฝนกำลังเคลื่อนเข้า{PLACE_NAME}</b> {when}\n"
+                         f"ตอนนี้ฝนคลุม {near:.0f}% ของรัศมี {RADAR_NEAR_KM} กม. "
+                         f"และกำลังขยับเข้าหาจุดนี้")
             severity = severity or "radar_soon"
             triggers.append("radar_soon")
         elif rd.get("near_now"):
@@ -1307,18 +1416,16 @@ def build_message(forecast, radar, warning, always_send=False, tide_clash=None,
         max_gust = max((f["gust"] for f in forecast), default=0)
 
         # ---------------------------------------------------------------
-        #  เงื่อนไขฝน 3 ชั้น
+        #  เงื่อนไขฝน 2 ชั้น
         # ---------------------------------------------------------------
-        #  1) ค่ากลางของทุกโมเดลต้องถึงเกณฑ์ปริมาณ
+        #  1) rain_mm = ปริมาณที่อย่างน้อย MIN_MODEL_AGREE โมเดลเห็นตรงกัน
+        #     (ดูวิธีคิดใน fetch_forecast) เงื่อนไข "โมเดลตรงกันกี่ตัว" จึงถูก
+        #     รวมอยู่ในตัวเลขนี้แล้ว ไม่ต้องเช็คซ้ำอีกชั้น
         #  2) โอกาสฝนต้องถึงเกณฑ์
-        #  3) ต้องมีโมเดลเห็นฝนตรงกันอย่างน้อย MIN_MODEL_AGREE ตัว
-        #     ชั้นที่ 3 คือตัวกรอง false alarm ที่ได้ผลที่สุด เพราะโมเดลเดี่ยว
-        #     ที่ความละเอียด 9-13 กม. มักสร้างฝนขึ้นมาเองโดยไม่มีจริง
         # ---------------------------------------------------------------
         rain_hours = [f for f in forecast
                       if f["rain_mm"] >= RAIN_MM_ALERT
-                      and f["prob"] >= PROB_ALERT
-                      and f["agree"] >= min(MIN_MODEL_AGREE, f["n_models"])]
+                      and f["prob"] >= PROB_ALERT]
 
         # ---------------------------------------------------------------
         #  เรดาร์ยับยั้งการเตือนฝนเบา
@@ -1536,6 +1643,11 @@ def main():
                     help="ส่งข้อความเสมอ แม้ไม่มีฝน และข้าม cooldown")
     ap.add_argument("--daily", action="store_true",
                     help="ส่งสรุปอากาศทั้งวัน (ใช้กับงานตอนเช้า 07:00 น.)")
+    ap.add_argument("--watch", type=int, metavar="นาที",
+                    help="เฝ้าดูต่อเนื่องกี่นาที แล้ววนเช็คเองเป็นระยะ "
+                         "(ใช้แก้ปัญหา GitHub ไม่ยอมรัน cron ตามเวลาที่ตั้ง)")
+    ap.add_argument("--every", type=int, default=5, metavar="นาที",
+                    help="ในโหมด --watch ให้เช็คทุกกี่นาที (ค่าตั้งต้น 5)")
     args = ap.parse_args()
 
     if args.test:
@@ -1558,6 +1670,20 @@ def main():
         print(text)
         sys.exit(0 if send_telegram(text) else 1)
 
+    if args.watch:
+        watch_loop(args.watch, args.every)
+        return
+
+    run_once(force=args.force)
+
+
+def run_once(force=False):
+    """
+    เช็คสภาพอากาศ 1 รอบ แล้วส่งข้อความถ้าเข้าเงื่อนไข — คืน True ถ้าส่งจริง
+
+    แยกออกมาจาก main() เพื่อให้โหมด --watch เรียกซ้ำได้หลายรอบในการรันเดียว
+    ทุกทางออกต้องเรียก watch_log() เสมอ ไม่ว่าจะเตือนหรือไม่
+    """
     print(f"[{now_th():%Y-%m-%d %H:%M:%S}] เริ่มเช็คสภาพอากาศ {PLACE_NAME} ({LAT}, {LON})")
 
     forecast = fetch_forecast()
@@ -1596,10 +1722,13 @@ def main():
         if rd is None:
             print("  เรดาร์: ข้ามการอ่านภาพ (ยังไม่ได้ติดตั้ง Pillow — pip install pillow)")
         else:
+            eta = rd.get("eta_min")
             print(f"  เรดาร์: เหนือจุดนี้={rd['now']} (คลุม {rd['cover_over']*100:.0f}% "
-                  f"ของรัศมี {RADAR_OVER_KM} กม.)  ใน 30 นาที={rd['in_30min']}  "
+                  f"ของรัศมี {RADAR_OVER_KM} กม.)  "
                   f"แถวนี้={rd['near_now']} (คลุม {rd['cover_near']*100:.0f}% "
-                  f"ของรัศมี {RADAR_NEAR_KM} กม.)")
+                  f"ของรัศมี {RADAR_NEAR_KM} กม.)  "
+                  f"กำลังเข้า={rd['in_30min']}"
+                  + (f" อีก ~{eta} นาที" if eta is not None else ""))
     else:
         print("  เรดาร์: ดึงไม่ได้")
 
@@ -1611,10 +1740,9 @@ def main():
 
     state = load_state()
 
-    # ตรวจความต่อเนื่อง — ใช้เกณฑ์เดียวกับที่ใช้คัดชั่วโมงฝน
+    # ตรวจความต่อเนื่อง — ใช้เกณฑ์เดียวกับที่ใช้คัดชั่วโมงฝนใน build_message
     cand = [f for f in (forecast or [])
-            if f["rain_mm"] >= RAIN_MM_ALERT and f["prob"] >= PROB_ALERT
-            and f["agree"] >= min(MIN_MODEL_AGREE, f["n_models"])]
+            if f["rain_mm"] >= RAIN_MM_ALERT and f["prob"] >= PROB_ALERT]
     persist_ok, cur_hours = check_persistence(state, cand)
     if cand:
         print(f"  ชั่วโมงที่เข้าเกณฑ์: {len(cand)} | "
@@ -1622,7 +1750,7 @@ def main():
 
     text, severity, triggers = build_message(
         forecast, radar, warning,
-        always_send=args.force, tide_clash=tide_clash,
+        always_send=force, tide_clash=tide_clash,
         persistence_ok=persist_ok,
         slp_delta=slp_delta, slp_span=slp_span)
     if triggers:
@@ -1636,24 +1764,24 @@ def main():
         print("  → ไม่มีอะไรต้องเตือน ไม่ส่งข้อความ")
         # จดไว้ด้วยเสมอ — รอบที่เงียบคือรอบที่บอกเราได้ว่าเกณฑ์เข้มเกินไปหรือเปล่า
         watch_log(forecast, radar, severity, triggers, False, slp_delta)
-        return
+        return False
 
     rank = SEVERITY_RANK.get(severity, 0)
 
     # ช่วงเวลาห้ามปลุก — ผ่านได้เฉพาะเรื่องรุนแรงจริง
-    if not args.force and in_quiet_hours() and rank < QUIET_MIN_RANK:
+    if not force and in_quiet_hours() and rank < QUIET_MIN_RANK:
         print(f"  → อยู่ในช่วงงดรบกวน ({QUIET_START}:00-{QUIET_END}:00) "
               f"และความรุนแรงระดับ {rank} ยังไม่ถึงเกณฑ์ปลุก ({QUIET_MIN_RANK}) ไม่ส่ง")
         log_alert(severity, forecast, radar, sent=False, triggers=triggers)
         watch_log(forecast, radar, severity, triggers, False, slp_delta)
-        return
+        return False
 
-    if not args.force and in_cooldown(state, severity):
+    if not force and in_cooldown(state, severity):
         print(f"  → เพิ่งเตือนไปภายใน {COOLDOWN_MINUTES} นาที "
               f"และความรุนแรงไม่ได้เพิ่มขึ้น ไม่ส่งซ้ำ")
         log_alert(severity, forecast, radar, sent=False, triggers=triggers)
         watch_log(forecast, radar, severity, triggers, False, slp_delta)
-        return
+        return False
 
     print("--- ข้อความ ---")
     print(text)
@@ -1665,6 +1793,67 @@ def main():
         state["last_rank"] = rank
         state["last_severity"] = severity
         save_state(state)
+    return ok
+
+
+# =====================================================================
+#  โหมดเฝ้าดูต่อเนื่อง — ทางออกของปัญหา "GitHub ไม่ยอมรันตามเวลาที่ตั้ง"
+# =====================================================================
+#
+#  ปัญหาที่วัดได้จริงจากประวัติการรัน 100 รอบ:
+#  ตั้ง cron ไว้ทุก 20 นาที แต่ GitHub รันให้จริงห่างกันต่ำสุด 41 นาที
+#  กลาง 63 นาที สูงสุด 163 นาที = ไม่เคยตรงตามที่ตั้งเลยสักครั้ง
+#  เพราะ GitHub ถ่วงคิว scheduled workflow ที่ตั้งถี่เสมอ (ไม่ใช่บั๊ก
+#  แต่เป็นนโยบาย ตั้งถี่แค่ไหนก็ไม่ช่วย)
+#
+#  ผลคือระบบตาบอด 167 ชั่วโมงจาก 12 วัน ขณะที่ฝนฟ้าคะนองบ้านเราตกครั้งละ
+#  30-60 นาที — พลาดโดยโครงสร้าง ต่อให้เกณฑ์ถูกต้องสมบูรณ์แบบ
+#
+#  ทางแก้: เลิกพึ่ง cron ให้ยิงถี่ เปลี่ยนเป็นให้ cron ยิงชั่วโมงละครั้ง
+#  แล้ว "อยู่ยาว" ในรอบนั้น วนเช็คเองทุก ๆ กี่นาทีก็ได้ตามต้องการ
+#  repo นี้เป็น public จึงใช้เวลา GitHub Actions ได้ไม่จำกัด
+# =====================================================================
+
+def watch_loop(total_minutes, every_minutes):
+    """
+    เฝ้าดูต่อเนื่อง total_minutes นาที โดยเช็คทุก every_minutes นาที
+
+    กันไว้ 2 อย่าง:
+      - รอบไหนพัง (เน็ตหลุด/API ล่ม) ต้องไม่ทำให้ทั้ง job ตาย เพราะจะเสีย
+        การเฝ้าดูที่เหลือทั้งชั่วโมงไปด้วย จึงจับ exception รายรอบ
+      - ไม่เริ่มรอบใหม่ถ้าเวลาที่เหลือไม่พอ จะได้จบก่อน cron รอบถัดไปมา
+        ไม่ให้สอง job ทับกัน
+    """
+    end_at = time.monotonic() + total_minutes * 60
+    gap = max(60, int(every_minutes * 60))
+    n = ok_n = fail_n = 0
+
+    # เพดานจำนวนรอบ — กันลูปรัวเรียก API
+    # ปกติเวลาเป็นตัวหยุดลูปอยู่แล้ว แต่ถ้า time.sleep ถูกขัดจังหวะ
+    # (เช่นโดนสัญญาณ) ลูปจะวนรัวจนครบ 50 นาทีโดยไม่หน่วงเลย
+    # = ยิง Open-Meteo/RainViewer เป็นพันครั้ง เสี่ยงโดนบล็อก IP
+    # เพดานนี้ทำให้เลวร้ายสุดก็แค่จบก่อนเวลา ไม่ใช่ยิงถล่มเซิร์ฟเวอร์เขา
+    max_rounds = int(total_minutes / max(every_minutes, 1)) + 2
+
+    print(f"เริ่มโหมดเฝ้าดู {total_minutes} นาที เช็คทุก {every_minutes} นาที "
+          f"(~{int(total_minutes / every_minutes)} รอบ เพดาน {max_rounds})")
+
+    while n < max_rounds:
+        n += 1
+        print(f"\n{'=' * 60}\n  รอบที่ {n}  [{now_th():%H:%M:%S}]\n{'=' * 60}")
+        try:
+            run_once()
+            ok_n += 1
+        except Exception as e:
+            fail_n += 1
+            print(f"  !! รอบนี้ล้มเหลว ข้ามไปรอบหน้า: {type(e).__name__}: {e}")
+
+        remain = end_at - time.monotonic()
+        if remain < gap:
+            break
+        time.sleep(gap)
+
+    print(f"\nจบโหมดเฝ้าดู — เช็คไป {n} รอบ (สำเร็จ {ok_n} ล้มเหลว {fail_n})")
 
 
 if __name__ == "__main__":
