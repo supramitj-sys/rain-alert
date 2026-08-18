@@ -502,3 +502,8 @@
 2026-08-18 14:07,radar_soon,radar_soon|pressure,0.0,88,0,4,0.0,no,4,5,no,
 2026-08-18 14:12,radar_soon,radar_soon|pressure,0.0,88,0,4,0.0,no,0,6,no,
 2026-08-18 15:12,radar_soon,radar_soon,0.0,89,0,4,0.0,no,16,24,no,
+2026-08-18 15:32,radar_soon,radar_soon,0.0,89,0,4,0.0,no,14,35,no,
+2026-08-18 15:38,radar_soon,radar_soon,0.0,89,0,4,0.0,no,14,35,no,
+2026-08-18 15:43,radar_soon,radar_soon,0.0,89,0,4,0.0,no,2,53,no,
+2026-08-18 15:48,radar_soon,radar_soon,0.0,89,0,4,0.0,no,2,53,no,
+2026-08-18 16:13,storm,radar_now|cape,0.0,89,0,4,0.0,yes,30,52,yes,
