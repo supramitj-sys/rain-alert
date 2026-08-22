@@ -1651,3 +1651,12 @@
 2026-08-22 12:51,27,54,yes,no,,1.0,1.9,96,2,4,0.0,56,1640,-2.2,radar_now,radar_now|rain|gust|pressure,no
 2026-08-22 12:56,27,54,yes,no,,1.0,1.9,96,2,4,0.0,56,1640,-2.2,radar_now,radar_now|rain|gust|pressure,no
 2026-08-22 13:01,27,51,yes,no,,1.0,3.8,96,2,4,0.4,56,1810,-0.9,radar_now,radar_now|rain|gust,no
+2026-08-22 13:28,75,54,yes,no,,1.0,3.8,96,2,4,0.4,56,1810,-0.9,radar_now,radar_now|rain|gust,no
+2026-08-22 13:33,75,42,yes,no,,1.0,3.8,96,2,4,0.4,56,1810,-0.9,radar_now,radar_now|rain|gust,no
+2026-08-22 13:39,75,42,yes,no,,1.0,3.8,96,2,4,0.4,56,1810,-0.9,radar_now,radar_now|rain|gust,no
+2026-08-22 13:44,22,34,no,no,,1.0,3.8,96,2,4,0.4,56,1810,-0.9,rain,rain|gust,no
+2026-08-22 13:49,22,34,no,no,,1.0,3.8,96,2,4,0.4,56,1810,-0.9,rain,rain|gust,no
+2026-08-22 13:54,10,20,no,no,,1.0,3.8,96,2,4,0.4,56,1810,-0.9,rain,rain|gust,yes
+2026-08-22 13:59,10,20,no,no,,1.0,3.8,96,2,4,0.4,56,1810,-0.9,rain,rain|gust,no
+2026-08-22 14:04,4,28,no,yes,27,1.0,3.8,96,2,4,0.4,56,1810,-0.2,radar_soon,radar_soon|rain|gust,yes
+2026-08-22 14:09,4,28,no,yes,27,1.0,3.8,96,2,4,0.4,56,1810,-0.2,radar_soon,radar_soon|rain|gust,no
