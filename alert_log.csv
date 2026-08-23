@@ -1284,3 +1284,8 @@
 2026-08-23 22:25,radar_soon,radar_soon|pressure,0.0,26,0,4,0.0,no,19,3,no,
 2026-08-23 22:31,radar_now,radar_now|pressure,0.0,26,0,4,0.0,yes,27,3,no,
 2026-08-23 22:36,radar_now,radar_now|pressure,0.0,26,0,4,0.0,yes,27,3,no,
+2026-08-24 00:35,radar_now,radar_now,0.0,24,0,4,0.0,yes,33,11,no,
+2026-08-24 00:40,radar_now,radar_now,0.0,24,0,4,0.0,yes,33,11,no,
+2026-08-24 00:45,radar_now,radar_now,0.0,24,0,4,0.0,yes,67,13,no,
+2026-08-24 00:50,radar_now,radar_now,0.0,14,0,4,0.0,yes,63,12,no,
+2026-08-24 00:55,radar_now,radar_now,0.0,14,0,4,0.0,yes,63,12,no,
