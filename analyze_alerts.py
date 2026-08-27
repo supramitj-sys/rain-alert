@@ -35,12 +35,21 @@
 import csv
 import sys
 import os
-from datetime import datetime
+import json
+import urllib.request
+from datetime import datetime, timedelta
 from collections import Counter, defaultdict
 
 LOG = sys.argv[1] if len(sys.argv) > 1 else "alert_log.csv"
 WATCH = "radar_watch.csv"     # ค่าที่ระบบจดทุก 20 นาที (ไม่ต้องกรอกมือ)
-RAIN_TIMES = "rain_times.txt"  # ช่วงเวลาที่ฝนตกจริง — ไฟล์เดียวที่ต้องกรอกเอง
+RAIN_TIMES = "rain_times.txt"  # (ทางเลือก) จดฝนจริงเอง ถ้าอยากได้เฉลยที่แม่นกว่าบางวัน
+
+# --- เฉลยอัตโนมัติ: ฝนจริงย้อนหลังจาก Open-Meteo ที่พิกัดบ้าน ---
+# ใช้ค่าเดียวกับที่ตั้งไว้ใน rain_alert_telegram.py (ผ่าน env เหมือนกัน)
+LAT = float(os.environ.get("WX_LAT", 13.53))
+LON = float(os.environ.get("WX_LON", 100.99))
+GT_RAIN_MM = 0.3        # ฝนจริงเกินนี้ (มม./ชม.) = "ตกจริง" (เริ่มรู้สึกเปียก)
+GT_BACK, GT_FWD = 1, 3  # การเตือนที่เวลา T ถือว่าคุ้มฝนช่วง T-1 ถึง T+3 ชม.
 
 # โครงคอลัมน์ทุกเวอร์ชันที่เคยมี — คีย์คือจำนวนคอลัมน์
 LAYOUTS = {
@@ -212,10 +221,169 @@ def load_rain_times(path):
     return spans, days
 
 
+def fetch_actual_rain():
+    """
+    ดึงฝนจริงรายชั่วโมงย้อนหลังจาก Open-Meteo ที่พิกัดบ้าน — คืน dict{ชั่วโมง: มม.}
+
+    ใช้ past_days ซึ่งให้ค่าที่วัด/วิเคราะห์ของอดีต เป็น "เฉลย" ได้โดยไม่ต้อง
+    ให้คนจด ข้อควรรู้: มันเป็นค่า reanalysis ของ Open-Meteo เอง ไม่ใช่มาตรวัด
+    น้ำฝนจริงที่หลังบ้าน และมาจากค่ายเดียวกับโมเดลที่ใช้เตือน จึงมีความสัมพันธ์
+    กันบ้าง ถือเป็น "ประมาณการที่ดี" ไม่ใช่คำตัดสินสุดท้าย
+    """
+    url = (f"https://api.open-meteo.com/v1/forecast?latitude={LAT}&longitude={LON}"
+           f"&hourly=precipitation&timezone=Asia/Bangkok&past_days=92&forecast_days=1")
+    try:
+        with urllib.request.urlopen(url, timeout=60) as r:
+            h = json.load(r)["hourly"]
+    except Exception as e:
+        print(f"  ดึงฝนจริงจาก Open-Meteo ไม่ได้ ({e}) — ข้ามการเทียบอัตโนมัติ")
+        return None
+    out = {}
+    for t, mm in zip(h.get("time", []), h.get("precipitation", [])):
+        try:
+            out[datetime.strptime(t, "%Y-%m-%dT%H:%M")] = mm or 0
+        except ValueError:
+            pass
+    return out or None
+
+
+def build_oracle():
+    """
+    สร้าง "เฉลย" ว่าเวลาใดฝนตกจริง โดยรวมสองแหล่ง:
+      1) ฝนจริงอัตโนมัติจาก Open-Meteo (หลัก — ไม่ต้องจด)
+      2) rain_times.txt ที่จดมือ (ถ้ามี — ใช้ทับเฉพาะวันที่จด เพราะแม่นกว่า)
+
+    คืน (rained_near, actual, manual_days) หรือ (None, ...) ถ้าไม่มีเฉลยเลย
+    """
+    actual = fetch_actual_rain()
+    spans, mdays = load_rain_times(RAIN_TIMES)
+    spans = spans or []
+    mdays = mdays or set()
+
+    if actual is None and not mdays:
+        return None, None, None
+
+    def rained_near(t, back=GT_BACK, fwd=GT_FWD):
+        # วันที่จดมือไว้ = เชื่อค่ามือก่อน (คนเห็นกับตา แม่นกว่า reanalysis)
+        if t.date() in mdays:
+            for dh in range(-back, fwd + 1):
+                x = t + timedelta(hours=dh)
+                if any(a <= x <= b for a, b in spans):
+                    return True
+            return False
+        if actual:
+            known = False
+            for dh in range(-back, fwd + 1):
+                hr = (t + timedelta(hours=dh)).replace(minute=0, second=0, microsecond=0)
+                if hr in actual:
+                    known = True
+                    if actual[hr] >= GT_RAIN_MM:
+                        return True
+            return False if known else None
+        return None
+
+    return rained_near, actual, mdays
+
+
+def auto_evaluate(all_rows):
+    """เทียบการเตือนทั้งหมดกับฝนจริงแบบอัตโนมัติ — ไม่ต้องกรอก Y/N เอง"""
+    section("ผลจริงเทียบกับฝนที่ตกจริง (อัตโนมัติ — ไม่ต้องกรอกเอง)")
+    oracle, actual, mdays = build_oracle()
+    if oracle is None:
+        print("  ยังเทียบไม่ได้: ดึงฝนจริงจากอินเทอร์เน็ตไม่ได้ และไม่มี rain_times.txt")
+        return
+
+    # ให้ทุกแถวมีเวลา + รู้ว่าฝนตกจริงไหม (เฉพาะที่เฉลยครอบคลุม)
+    rows = []
+    for r in all_rows:
+        try:
+            t = datetime.strptime(r["time"][:16], "%Y-%m-%d %H:%M")
+        except (ValueError, KeyError):
+            continue
+        gt = oracle(t)
+        if gt is None:
+            continue                       # อยู่นอกช่วงที่มีเฉลย
+        r2 = dict(r); r2["_t"] = t; r2["_gt"] = gt
+        rows.append(r2)
+
+    if not rows:
+        print("  ไม่มีการเตือนที่อยู่ในช่วงที่เฉลยครอบคลุม")
+        return
+
+    days = sorted({r["_t"].date() for r in rows})
+    src = "Open-Meteo (อัตโนมัติ)"
+    if mdays:
+        src += f" + จดมือ {len(mdays)} วัน"
+    print(f"  เฉลยจาก: {src}")
+    print(f"  ช่วง {days[0]} → {days[-1]} ({len(days)} วัน) | เทียบได้ {len(rows)} การเตือน")
+
+    def prate(sub):
+        if not sub:
+            return "—"
+        h = sum(1 for r in sub if r["_gt"])
+        return f"{h}/{len(sub)} = {h/len(sub)*100:.0f}%"
+
+    sent = [r for r in rows if r["sent"]]
+
+    # --- baseline: ถ้าส่งมั่วทุกครั้งที่ตื่นมาเช็ค จะบังเอิญตรงกี่ % ---
+    base_txt = ""
+    if os.path.exists(WATCH):
+        wt = []
+        with open(WATCH, encoding="utf-8-sig", newline="") as f:
+            for o in csv.DictReader(f):
+                try:
+                    wt.append(datetime.strptime(o["เวลา"][:16], "%Y-%m-%d %H:%M"))
+                except (ValueError, KeyError):
+                    pass
+        bd = [oracle(t) for t in wt]
+        bd = [x for x in bd if x is not None]
+        if bd:
+            b = sum(bd) / len(bd) * 100
+            base_txt = f"{b:.0f}%"
+
+    print(f"\n  📨 ข้อความที่ส่งเข้า Telegram จริง -> ตกจริง {prate(sent)}")
+    if base_txt:
+        print(f"     (ถ้าส่งมั่วทุกครั้งจะตรง {base_txt} อยู่แล้ว เพราะช่วงนี้ฝนตกบ่อย)")
+        try:
+            hitpct = sum(1 for r in sent if r["_gt"]) / len(sent) * 100
+            print(f"     → ระบบเก่งกว่าการเดา {hitpct - float(base_txt[:-1]):.0f} จุด")
+        except (ValueError, ZeroDivisionError):
+            pass
+
+    # --- แยกตามทริกเกอร์ (เฉพาะที่ส่งจริง) ---
+    print("\n  แยกตามทริกเกอร์ (เฉพาะข้อความที่ส่งจริง):")
+    bytrig = defaultdict(list)
+    for r in sent:
+        for tg in (r["trig"] or []):
+            bytrig[tg].append(r)
+    for tg in sorted(bytrig, key=lambda k: -len(bytrig[k])):
+        print(f"     {tg:<14} {prate(bytrig[tg])}")
+    print("     ตัวที่ % ต่ำกว่าค่าเฉลี่ยมาก = ยังพอรัดเกณฑ์ให้แม่นขึ้นได้")
+
+    # --- ฝนจริงที่ระบบพลาด (ไม่ได้เตือนเลย) ---
+    if actual:
+        lo, hi = min(r["_t"] for r in rows), max(r["_t"] for r in rows)
+        covered = set()
+        for r in sent:
+            for dh in range(-GT_FWD, GT_BACK + 1):
+                covered.add((r["_t"] + timedelta(hours=dh)).replace(
+                    minute=0, second=0, microsecond=0))
+        wet = [hr for hr, mm in actual.items()
+               if mm >= GT_RAIN_MM and lo <= hr <= hi and hr.date() not in mdays]
+        if wet:
+            miss = [hr for hr in wet if hr not in covered]
+            caught = len(wet) - len(miss)
+            print(f"\n  🎯 ฝนจริงที่ระบบจับได้: {caught}/{len(wet)} = "
+                  f"{caught/len(wet)*100:.0f}%  (พลาดไม่ได้เตือน {len(miss)} ชม.)")
+            print("     ตัวเลขนี้สำคัญกับงานก่อสร้าง — พลาดฝนแพงกว่าเตือนเกิน")
+
+
 def tune_radar():
     """หาจุดตัด % ที่แยกฝนจริงออกจากฝนหลอกได้ดีที่สุด"""
     if not os.path.exists(WATCH):
         return
+    # ใช้เฉลยอัตโนมัติเป็นหลัก ถ้าไม่มีค่อยตกไปใช้ rain_times.txt ที่จดมือ
+    oracle, _actual, _md = build_oracle()
     spans, days = load_rain_times(RAIN_TIMES)
 
     with open(WATCH, encoding="utf-8-sig", newline="") as f:
@@ -225,36 +393,31 @@ def tune_radar():
 
     section(f"จูนเกณฑ์เรดาร์จาก {WATCH} ({len(obs)} จุดสังเกต)")
 
-    if spans is None:
-        print(f"  ยังไม่มีไฟล์ {RAIN_TIMES} — ระบบจดค่าไว้ให้แล้ว {len(obs)} จุด")
-        print(f"  แต่ยังไม่รู้ว่าฝนตกจริงตอนไหน สร้างไฟล์ {RAIN_TIMES} แล้วจดแบบนี้:")
-        print("      2026-08-04 14:20 15:10     <- ฝนตกช่วงนี้")
-        print("      2026-08-05 -               <- วันนี้เฝ้าดูแล้ว ไม่มีฝน")
-        return
-    if not days:
-        print(f"  {RAIN_TIMES} ยังว่างอยู่ — ยังจับคู่กับอะไรไม่ได้")
+    if oracle is None:
+        print("  ยังเทียบไม่ได้: ดึงฝนจริงไม่ได้ และไม่มี rain_times.txt")
         return
 
     rows = []
     for o in obs:
         try:
-            t = datetime.strptime(o["เวลา"], "%Y-%m-%d %H:%M")
+            t = datetime.strptime(o["เวลา"][:16], "%Y-%m-%d %H:%M")
         except (ValueError, KeyError):
             continue
-        if t.date() not in days:
-            continue                       # วันที่ไม่ได้เฝ้าดู ข้ามทั้งหมด
+        gt = oracle(t, back=0, fwd=0)      # จูนเรดาร์ = เทียบชั่วโมงนั้นตรง ๆ
+        if gt is None:
+            continue                       # นอกช่วงที่มีเฉลย
         cov = _f(o.get("เรดาร์คลุมวงแคบ(%)"), -1)
         if cov < 0:
             continue
-        rows.append((cov, any(a <= t <= b for a, b in spans)))
+        rows.append((cov, gt))
 
     if not rows:
-        print("  ยังไม่มีจุดสังเกตที่ตรงกับวันที่จดไว้")
+        print("  ยังไม่มีจุดสังเกตที่อยู่ในช่วงที่เฉลยครอบคลุม")
         return
 
     wet = sum(1 for _, r in rows if r)
-    print(f"  ใช้ได้ {len(rows)} จุด จาก {len(days)} วันที่เฝ้าดู "
-          f"| อยู่ในช่วงฝนตกจริง {wet} จุด ({wet/len(rows)*100:.0f}%)")
+    print(f"  ใช้ได้ {len(rows)} จุด | อยู่ในช่วงฝนตกจริง {wet} จุด "
+          f"({wet/len(rows)*100:.0f}%)")
     if wet < 5:
         print("  ⚠️ จุดที่ฝนตกจริงยังน้อยเกินไป เก็บต่ออีกหน่อยก่อนเชื่อผล")
 
@@ -276,7 +439,14 @@ def tune_radar():
               f" {prec*100:5.0f}% {rec*100:6.0f}% {sc:6.2f}{mark}")
     print("  (คะแนนให้น้ำหนัก 'ไม่พลาดฝนจริง' มากกว่า 'ไม่เตือนเกิน' 2 เท่า)")
 
-    if best and best[0] > 0:
+    # เฉลยอัตโนมัติ (Open-Meteo) หยาบเกินไปสำหรับจูนเรดาร์โดยเฉพาะ เพราะเป็นการ
+    # เอา % เรดาร์ (RainViewer) เทียบฝนจริง (Open-Meteo) — คนละเครื่องมือ คนละ
+    # ความละเอียดเชิงพื้นที่/เวลา ถ้าความแม่นสูงสุดยังต่ำ = สองสัญญาณไม่ค่อยตรงกัน
+    # ห้ามเชื่อค่าที่แนะนำ ต้องใช้ตาคนดูจริง (rain_times.txt) ถึงจะจูนเรดาร์ได้จริง
+    auto_only = not _md
+    reliable = best and best[5] >= 0.6      # precision ของจุดที่ดีที่สุด >= 60%
+
+    if best and best[0] > 0 and not (auto_only and not reliable):
         f1, th, tp, fp, fn, prec, rec = best
         print(f"\n  → ตั้ง RADAR_OVER_COVERAGE = {th/100:.2f}  (คือ {th}%)")
         print(f"     ในไฟล์ rain_alert_telegram.py")
@@ -284,6 +454,13 @@ def tune_radar():
         print(f"     เตือนแล้วถูก {prec*100:.0f}% · ฝนจริงจับได้ {rec*100:.0f}%")
         print("\n     ถ้างานคุณกลัวพลาดมากกว่ากลัวรำคาญ ให้เลือกแถวที่ 'จับได้%'")
         print("     สูงกว่านี้ แล้วยอมรับตัวเลข 'ผิด' ที่มากขึ้น")
+    elif auto_only and not reliable:
+        print("\n  ⚠️ ยัง 'ไม่แนะนำ' ให้เปลี่ยน RADAR_OVER_COVERAGE จากตารางนี้")
+        print("     เพราะเฉลยตอนนี้เป็นฝนจริงจาก Open-Meteo (อัตโนมัติ) ซึ่งเป็นคนละ")
+        print("     เครื่องมือกับเรดาร์ วัดคนละจุดคนละเวลา จึงตรงกันไม่พอ (แม่นสุดยังต่ำ)")
+        print("     วิธีจูนเรดาร์ให้เชื่อได้จริง: จด rain_times.txt สัก 5-7 วันที่ฝนตก")
+        print("     (ตาเห็นจริงที่ไซต์) แล้วรันใหม่ ตารางนี้จะเปลี่ยนไปใช้เฉลยจากตาคุณ")
+        print("     ระหว่างนี้คงค่าเดิม RADAR_OVER_COVERAGE = 0.25 ไว้ก่อน")
     else:
         print("\n  ยังหาจุดตัดที่ใช้ได้ไม่เจอ — เก็บข้อมูลต่ออีกสักพัก")
 
@@ -296,14 +473,26 @@ def main():
           f"| กรอกผลจริงแล้ว {len(rows)} แถว")
     print("=" * 66)
 
+    # ---------- เทียบกับฝนจริงแบบอัตโนมัติ (หัวใจของรายงาน) ----------
+    # รันก่อนเสมอ ไม่ต้องรอให้กรอก Y/N — ใช้ฝนจริงจาก Open-Meteo เป็นเฉลย
+    auto_evaluate(all_rows)
+    tune_radar()
+
     if not rows:
-        print("\nยังไม่มีแถวที่กรอกช่อง 'ฝนตกจริง' เลย")
-        print("เปิดไฟล์ alert_log.csv แล้วกรอก Y หรือ N ในคอลัมน์สุดท้ายก่อน")
+        print("\n" + "─" * 66)
+        print("  ส่วนด้านบนคือผลอัตโนมัติ (เทียบกับฝนจริง) — ใช้ได้เลยไม่ต้องกรอกอะไร")
+        print("  ถ้าอยากได้เฉลยที่แม่นกว่าบางวัน (เช่นวันที่ Open-Meteo พลาด)")
+        print("  ค่อยจด rain_times.txt เพิ่มเป็นรายวันก็ได้ ไม่บังคับ")
+        print("=" * 66)
         sys.exit(0)
 
+    # ---------- ส่วนล่างนี้ใช้เฉพาะแถวที่กรอก Y/N เอง (ถ้ามี) ----------
+    print("\n" + "─" * 66)
+    print("  ต่อไปนี้เป็นผลจากแถวที่กรอก Y/N เอง (ละเอียดกว่าแต่ต้องกรอก)")
+
     if len(rows) < 15:
-        print(f"\n  ⚠️ ข้อมูลยังน้อย ({len(rows)} แถว) ผลอาจยังไม่น่าเชื่อถือ")
-        print("     ควรเก็บให้ได้อย่างน้อย 15-20 แถวก่อนตัดสินใจปรับเกณฑ์")
+        print(f"\n  ⚠️ ข้อมูลที่กรอกเองยังน้อย ({len(rows)} แถว) ผลอาจยังไม่น่าเชื่อถือ")
+        print("     ส่วนอัตโนมัติด้านบนเชื่อถือได้มากกว่าถ้ากรอกเองยังไม่ครบ")
 
     # ---------- ภาพรวม ----------
     rained = sum(1 for r in rows if r["rain"])
@@ -420,8 +609,7 @@ def main():
         print("  ไม่มีชุดเกณฑ์ไหนจับฝนจริงได้เลยในข้อมูลชุดนี้ แปลว่าฝนที่ตกจริง")
         print("  ไม่ได้ถูกโมเดลทำนายไว้ล่วงหน้า — ต้องพึ่งเรดาร์เป็นหลัก ไม่ใช่โมเดล")
 
-    # ---------- จูนเกณฑ์เรดาร์จากสมุดจดค่า ----------
-    tune_radar()
+    # (จูนเกณฑ์เรดาร์ย้ายไปเรียกด้านบนแล้ว ก่อน early-exit — จะได้เห็นแม้ไม่กรอก Y/N)
 
     print("\n  ⚠️ ดูช่อง 'พลาด' ด้วย ไม่ใช่แค่ 'ผิด'")
     print("     เกณฑ์ที่เข้มจนไม่เตือนอะไรเลยจะดูแม่น 100% แต่ไร้ประโยชน์")
