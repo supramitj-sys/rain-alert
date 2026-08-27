@@ -869,6 +869,7 @@ def fetch_radar_nowcast():
     result = {
         "nowcast_frames": len(nowcast),
         "latest_path": latest.get("path") if latest else None,
+        "frame_time": latest.get("time") if latest else None,   # unix — บอทเอาไปโชว์เวลาภาพ
         "host": host,
         "map_url": f"https://www.rainviewer.com/map.html?loc={LAT},{LON},9",
     }
