@@ -1686,3 +1686,5 @@
 2026-08-28 16:00,gust,gust,0.1,92,0,4,0.0,no,11,12,no,
 2026-08-28 16:05,radar_now,radar_now|gust,0.1,92,0,4,0.0,yes,36,20,yes,
 2026-08-28 16:10,radar_now,radar_now|gust,0.1,92,0,4,0.0,yes,69,31,no,
+2026-08-29 03:35,radar_now,radar_now,0.3,64,1,4,0.0,yes,95,48,no,
+2026-08-29 03:40,radar_now,radar_now,0.3,64,1,4,0.0,yes,95,48,no,
