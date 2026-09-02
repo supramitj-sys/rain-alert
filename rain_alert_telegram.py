@@ -1161,7 +1161,7 @@ def fetch_day_outlook():
                       "precipitation_probability_max,wind_speed_10m_max,"
                       "wind_gusts_10m_max,wind_direction_10m_dominant,"
                       "uv_index_max,sunrise,sunset"),
-            "hourly": "precipitation,precipitation_probability,cloud_cover",
+            "hourly": "precipitation,precipitation_probability,cloud_cover,weather_code",
         })
         r.raise_for_status()
         data = r.json()
@@ -1191,7 +1191,8 @@ def fetch_day_outlook():
 
         hours.append({"time": dt, "rain": at("precipitation") or 0,
                       "prob": at("precipitation_probability") or 0,
-                      "cloud": at("cloud_cover")})
+                      "cloud": at("cloud_cover"),
+                      "code": at("weather_code")})
 
     return {
         "date": datetime.fromisoformat(d["time"][0]),
@@ -1242,8 +1243,15 @@ def build_daily_summary(day, tmd_warning=None):
     L.append(f"🌤️ <b>สรุปอากาศวันนี้ · {PLACE_NAME}</b>")
     L.append(f"{thai_date(day['date'])}\n")
 
-    if day["code"] is not None:
-        desc = WMO_TEXT.get(day["code"], f"รหัสสภาพอากาศ {day['code']}")
+    # ภาพรวมต้องมาจากชั่วโมงที่ "เหลือ" ของวัน ไม่ใช่รหัสระดับวันจาก API
+    # เพราะรหัสระดับวันรวมชั่วโมงที่ผ่านไปแล้ว ทำให้เกิดข้อความขัดกันเอง เช่น
+    # "ภาพรวม: ฝนละออง" (ฝนตอนตี 3 ที่ผ่านไปแล้ว) แต่ "ฝน: ไม่มีสัญญาณฝน"
+    # ใช้ max() เพราะรหัส WMO ยิ่งสูงยิ่งรุนแรงในแต่ละกลุ่ม ตรงกับวิธีที่
+    # Open-Meteo รวมเป็นรหัสรายวันอยู่แล้ว
+    codes = [h["code"] for h in day["hours"] if h.get("code") is not None]
+    code = max(codes) if codes else day["code"]
+    if code is not None:
+        desc = WMO_TEXT.get(code, f"รหัสสภาพอากาศ {code}")
         L.append(f"📖 ภาพรวม: {desc}")
 
     # --- แดดกับเมฆ (ดูเฉพาะช่วงเวลาทำงาน 07-17 น.) ---
