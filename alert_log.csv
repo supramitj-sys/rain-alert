@@ -1817,3 +1817,6 @@
 2026-09-02 17:54,storm,cape,1.6,51,2,4,3.6,no,0,12,no,
 2026-09-02 17:59,storm,cape,1.6,51,2,4,3.6,no,0,12,no,
 2026-09-02 22:33,storm,radar_soon|cape|pressure,0.0,58,0,4,0.0,no,6,15,yes,
+2026-09-03 19:28,storm,radar_now|cape,0.2,59,1,4,0.0,yes,33,25,yes,
+2026-09-03 20:03,storm,radar_soon|cape,0.2,59,1,4,0.0,no,0,21,no,
+2026-09-03 20:09,storm,radar_soon|cape,0.2,59,1,4,0.0,no,0,21,no,
