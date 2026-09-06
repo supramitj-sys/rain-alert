@@ -3109,3 +3109,12 @@
 2026-09-06 21:23,99,59,yes,no,,0.0,0.5,95,0,4,0.0,30,2480,-0.5,radar_now,radar_now,no
 2026-09-06 21:28,99,59,yes,no,,0.0,0.5,95,0,4,0.0,30,2480,-0.5,radar_now,radar_now,no
 2026-09-06 21:33,86,59,yes,no,,0.0,0.5,95,0,4,0.0,30,2480,-0.5,radar_now,radar_now,no
+2026-09-06 23:38,100,92,yes,no,,0.2,1.1,51,1,4,0.1,30,2520,-2.8,storm,radar_now|cape|pressure,yes
+2026-09-06 23:43,100,96,yes,no,,0.2,1.1,51,1,4,0.1,30,2520,-2.8,storm,radar_now|cape|pressure,no
+2026-09-06 23:49,100,96,yes,no,,0.2,1.1,51,1,4,0.1,30,2520,-2.8,storm,radar_now|cape|pressure,no
+2026-09-06 23:54,100,96,yes,no,,0.2,1.1,51,1,4,0.1,30,2520,-2.8,storm,radar_now|cape|pressure,no
+2026-09-06 23:59,100,96,yes,no,,0.2,1.1,51,1,4,0.1,30,2520,-2.8,storm,radar_now|cape|pressure,no
+2026-09-07 00:04,100,98,yes,no,,0.2,1.1,46,1,4,0.0,30,2520,-1.6,storm,radar_now|cape|pressure,no
+2026-09-07 00:09,100,98,yes,no,,0.2,1.1,46,1,4,0.0,30,2520,-1.6,storm,radar_now|cape|pressure,no
+2026-09-07 00:14,100,99,yes,no,,0.2,1.1,46,1,4,0.0,30,2520,-1.6,storm,radar_now|cape|pressure,no
+2026-09-07 00:19,100,99,yes,no,,0.2,1.1,46,1,4,0.0,30,2520,-1.6,storm,radar_now|cape|pressure,no
