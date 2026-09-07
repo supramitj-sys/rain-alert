@@ -1910,3 +1910,7 @@
 2026-09-07 06:25,radar_now,radar_now,0.0,51,0,4,0.0,yes,62,71,no,
 2026-09-07 06:30,radar_now,radar_now,0.0,51,0,4,0.0,yes,62,71,no,
 2026-09-07 07:36,radar_now,radar_now,0.0,47,0,4,0.0,yes,74,50,no,
+2026-09-07 12:44,radar_now,radar_now|pressure,0.0,31,0,4,0.0,yes,33,11,yes,
+2026-09-07 12:49,radar_now,radar_now|pressure,0.0,31,0,4,0.0,yes,33,11,no,
+2026-09-07 12:55,radar_now,radar_now|pressure,0.0,31,0,4,0.0,yes,33,11,no,
+2026-09-07 13:00,radar_now,radar_now,0.0,0,0,0,,yes,33,11,no,
