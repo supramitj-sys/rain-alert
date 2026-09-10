@@ -1947,3 +1947,4 @@
 2026-09-10 07:15,radar_now,radar_now,0.0,48,1,4,0.0,yes,68,50,no,
 2026-09-10 07:20,radar_now,radar_now,0.0,48,1,4,0.0,yes,94,53,no,
 2026-09-10 07:25,radar_now,radar_now,0.0,48,1,4,0.0,yes,94,53,no,
+2026-09-10 09:35,storm,radar_now|cape|pressure,0.1,67,1,4,0.0,yes,70,20,yes,
