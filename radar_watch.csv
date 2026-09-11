@@ -3397,3 +3397,12 @@
 2026-09-11 17:55,0,17,no,no,,1.5,5.1,93,2,4,5.1,24,2150,3.7,rain,rain,no
 2026-09-11 18:00,0,21,no,no,,1.5,5.1,90,2,4,5.1,21,2150,3.2,rain,rain,no
 2026-09-11 18:05,0,21,no,no,,1.5,5.1,90,2,4,5.1,21,2150,3.2,rain,rain,no
+2026-09-11 21:47,100,96,yes,no,,2.0,2.1,98,2,4,0.0,27,2010,-1.2,radar_now,radar_now,yes
+2026-09-11 21:52,100,96,yes,no,,2.0,2.1,98,2,4,0.0,27,2010,-1.2,radar_now,radar_now|rain,no
+2026-09-11 21:57,100,96,yes,no,,2.0,2.1,98,2,4,0.0,27,2010,-1.2,radar_now,radar_now|rain,no
+2026-09-11 22:02,86,91,yes,no,,2.0,2.1,94,2,4,0.0,27,1850,-2.0,radar_now,radar_now|rain|pressure,no
+2026-09-11 22:07,86,91,yes,no,,2.0,2.1,94,2,4,0.0,27,1850,-2.0,radar_now,radar_now|rain|pressure,no
+2026-09-11 22:12,88,80,yes,no,,2.0,2.1,94,2,4,0.0,27,1850,-2.0,radar_now,radar_now|rain|pressure,no
+2026-09-11 22:17,88,80,yes,no,,2.0,2.1,94,2,4,0.0,27,1850,-2.0,radar_now,radar_now|rain|pressure,no
+2026-09-11 22:22,88,80,yes,no,,2.0,2.1,94,2,4,0.0,27,1850,-2.0,radar_now,radar_now|rain|pressure,no
+2026-09-11 22:27,88,80,yes,no,,2.0,2.1,94,2,4,0.0,27,1850,-2.0,radar_now,radar_now|rain|pressure,no
