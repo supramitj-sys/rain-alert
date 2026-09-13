@@ -2112,3 +2112,6 @@
 2026-09-13 13:04,radar_now,radar_now|rain|pressure,1.2,88,2,4,0.0,yes,72,30,no,
 2026-09-13 13:09,radar_now,radar_now|rain|pressure,1.2,88,2,4,0.0,yes,72,30,no,
 2026-09-13 13:14,radar_now,radar_now|rain|pressure,1.2,88,2,4,0.0,yes,94,37,no,
+2026-09-13 21:46,radar_now,radar_now,0.0,20,0,4,0.0,yes,64,14,yes,
+2026-09-13 21:51,radar_now,radar_now,0.0,20,0,4,0.0,yes,64,14,no,
+2026-09-13 21:56,radar_now,radar_now,0.0,20,0,4,0.0,yes,64,14,no,
