@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>เรดาร์ฝน ใกล้ฉะเชิงเทรา</title>
+<style>
+  :root { color-scheme: light; }
+  body {
+    margin: 0;
+    padding: 24px;
+    font-family: "Segoe UI", "Tahoma", sans-serif;
+    background: #f4f6f8;
+    color: #1c1c1e;
+  }
+  h1 {
+    font-size: 20px;
+    margin: 0 0 4px 0;
+  }
+  .sub {
+    color: #555;
+    font-size: 13px;
+    margin-bottom: 20px;
+  }
+  .toolbar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 20px;
+  }
+  button {
+    background: #2563eb;
+    color: white;
+    border: none;
+    padding: 8px 16px;
+    border-radius: 6px;
+    font-size: 14px;
+    cursor: pointer;
+  }
+  button:hover { background: #1d4ed8; }
+  #lastUpdated {
+    font-size: 13px;
+    color: #555;
+  }
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+    gap: 20px;
+  }
+  .card {
+    background: white;
+    border-radius: 10px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.12);
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+  }
+  .card-header {
+    padding: 12px 16px 8px 16px;
+  }
+  .card-header h2 {
+    font-size: 15px;
+    margin: 0 0 2px 0;
+  }
+  .card-header p {
+    font-size: 12px;
+    color: #666;
+    margin: 0;
+  }
+  .card img {
+    width: 100%;
+    display: block;
+    background: #eee;
+    min-height: 200px;
+    object-fit: contain;
+  }
+  .card-footer {
+    padding: 8px 16px 14px 16px;
+    font-size: 12px;
+  }
+  .card-footer a {
+    color: #2563eb;
+    text-decoration: none;
+  }
+  .card-footer a:hover { text-decoration: underline; }
+  .note {
+    margin-top: 24px;
+    font-size: 12px;
+    color: #777;
+    line-height: 1.6;
+  }
+</style>
+</head>
+<body>
+
+<h1>เรดาร์ฝนล่าสุด — สถานีที่ใกล้ฉะเชิงเทราที่สุด</h1>
+<div class="sub">ดึงภาพสดจากเว็บกรมอุตุนิยมวิทยา (weather.tmd.go.th) — เปิดไฟล์นี้ครั้งไหนก็ได้ภาพล่าสุด ณ ตอนนั้น</div>
+
+<div class="toolbar">
+  <button onclick="refreshAll()">รีเฟรชตอนนี้</button>
+  <span id="lastUpdated"></span>
+</div>
+
+<div class="grid">
+  <div class="card">
+    <div class="card-header">
+      <h2>หนองจอก (กทม.)</h2>
+      <p>ใกล้ฉะเชิงเทราฝั่งตะวันตกที่สุด — เวลาที่แสดงในภาพเป็นเวลาไทย (TST)</p>
+    </div>
+    <img id="img-nongchok" src="https://weather.tmd.go.th/pic_bmanck.jpg" alt="เรดาร์หนองจอก">
+    <div class="card-footer">
+      <a href="https://weather.tmd.go.th/bma_nck.php" target="_blank">เปิดหน้าเต็ม / ดูแบบ Loop →</a>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <h2>สุวรรณภูมิ (สมุทรปราการ)</h2>
+      <p>ครอบคลุมฉะเชิงเทราฝั่งตะวันตก-ใต้ — เวลาที่แสดงในภาพเป็น UTC (บวก 7 ชม. เป็นเวลาไทย)</p>
+    </div>
+    <img id="img-suvarnabhumi" src="https://weather.tmd.go.th/svp/svp120_latest.jpg" alt="เรดาร์สุวรรณภูมิ">
+    <div class="card-footer">
+      <a href="https://weather.tmd.go.th/svp_120.php" target="_blank">เปิดหน้าเต็ม / ดูแบบ Loop →</a>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <h2>สัตหีบ (ชลบุรี)</h2>
+      <p>ครอบคลุมฉะเชิงเทราฝั่งใต้/ตะวันออก — เวลาที่แสดงในภาพเป็น UTC (บวก 7 ชม. เป็นเวลาไทย)</p>
+    </div>
+    <img id="img-sattahip" src="https://weather.tmd.go.th/sat/sat240_latest.png" alt="เรดาร์สัตหีบ">
+    <div class="card-footer">
+      <a href="https://weather.tmd.go.th/sattahip.php" target="_blank">เปิดหน้าเต็ม / ดูแบบ Loop →</a>
+    </div>
+  </div>
+</div>
+
+<div class="note">
+  หน้านี้คือไฟล์ HTML ธรรมดาที่บันทึกไว้ในเครื่อง — เปิดด้วยเบราว์เซอร์ (ดับเบิลคลิก หรือลากเข้า Chrome/Edge) แล้วมันจะไปดึงภาพสดจากเซิร์ฟเวอร์กรมอุตุฯ ตรง ๆ ทุกครั้งที่เปิดหรือกดรีเฟรช<br>
+  ระบบรีเฟรชภาพอัตโนมัติทุก 5 นาที และมีปุ่มรีเฟรชด้วยตนเอง — สีบนภาพ: เขียว/ฟ้า = ฝนเบา, เหลือง/ส้ม = ฝนปานกลาง-แรง, แดง/ม่วง = ฝนแรงมาก
+</div>
+
+<script>
+  function refreshAll() {
+    const ts = Date.now();
+    document.getElementById('img-nongchok').src = 'https://weather.tmd.go.th/pic_bmanck.jpg?v=' + ts;
+    document.getElementById('img-suvarnabhumi').src = 'https://weather.tmd.go.th/svp/svp120_latest.jpg?v=' + ts;
+    document.getElementById('img-sattahip').src = 'https://weather.tmd.go.th/sat/sat240_latest.png?v=' + ts;
+    document.getElementById('lastUpdated').textContent = 'รีเฟรชล่าสุด: ' + new Date().toLocaleString('th-TH');
+  }
+  refreshAll();
+  setInterval(refreshAll, 5 * 60 * 1000);
+</script>
+
+</body>
+</html>
