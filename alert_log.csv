@@ -2270,3 +2270,6 @@
 2026-09-19 17:07,radar_now,radar_now,0.5,96,1,4,0.0,yes,51,62,yes,
 2026-09-19 17:12,radar_now,radar_now,0.5,96,1,4,0.0,yes,32,49,no,
 2026-09-19 17:17,radar_now,radar_now,0.5,96,1,4,0.0,yes,32,49,no,
+2026-09-19 21:06,radar_now,radar_now,0.3,72,1,4,0.0,yes,47,40,yes,
+2026-09-19 21:41,radar_soon,radar_soon,0.3,72,1,4,0.0,no,0,2,no,
+2026-09-19 21:46,radar_soon,radar_soon,0.3,77,1,4,0.0,no,0,2,no,
