@@ -4000,3 +4000,12 @@
 2026-09-22 07:59,100,90,yes,no,,0.0,0.0,48,0,4,0.0,18,1450,-0.7,radar_now,radar_now,no
 2026-09-22 08:05,100,91,yes,no,,0.1,0.1,63,0,3,,19,1660,,radar_now,radar_now,no
 2026-09-22 08:10,100,91,yes,no,,0.0,0.2,63,0,4,0.0,24,2170,-2.0,radar_now,radar_now|pressure,no
+2026-09-22 12:44,49,39,yes,no,,1.0,2.3,98,2,4,0.0,24,2410,-4.5,radar_now,radar_now|pressure,yes
+2026-09-22 12:49,49,39,yes,no,,1.0,2.3,98,2,4,0.0,24,2410,-4.5,radar_now,radar_now|rain|pressure,no
+2026-09-22 12:54,49,38,yes,no,,1.0,2.3,98,2,4,0.0,24,2410,-4.5,radar_now,radar_now|rain|pressure,no
+2026-09-22 12:59,49,38,yes,no,,1.0,2.3,98,2,4,0.0,24,2410,-4.5,radar_now,radar_now|rain|pressure,no
+2026-09-22 13:04,58,31,yes,no,,1.2,2.6,98,3,4,0.0,24,2410,-2.0,radar_now,radar_now|rain|pressure,no
+2026-09-22 13:09,58,31,yes,no,,1.2,2.6,98,3,4,0.0,24,2410,-2.0,radar_now,radar_now|rain|pressure,no
+2026-09-22 13:14,68,33,yes,no,,1.2,2.6,98,3,4,0.0,24,2410,-2.0,radar_now,radar_now|rain|pressure,no
+2026-09-22 13:19,68,33,yes,no,,1.2,2.6,98,3,4,0.0,24,2410,-2.0,radar_now,radar_now|rain|pressure,no
+2026-09-22 13:24,68,34,yes,no,,1.2,2.6,98,3,4,0.0,24,2410,-2.0,radar_now,radar_now|rain|pressure,no
