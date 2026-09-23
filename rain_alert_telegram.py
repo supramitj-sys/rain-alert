@@ -1231,6 +1231,48 @@ def rain_windows(hours, prob_min=50, mm_min=0.2):
 WORK_START, WORK_END = 7, 17
 
 
+#  เวลาที่อยากให้สรุปเช้าถึงมือ — workflow เริ่มก่อน (05:17) แล้วรอถึงเวลานี้
+DAILY_SEND_AT = (6, 58)
+#  ส่งหลังเวลานี้ถือว่า "ส่งช้า" ต้องบอกคนอ่านในหัวข้อความ
+DAILY_LATE_AFTER = (7, 30)
+
+
+def wait_for_daily_time():
+    """
+    ถ้าเริ่มรันก่อน DAILY_SEND_AT ให้รอจนถึงเวลานั้นค่อยทำงานต่อ
+
+    ตัวตั้งเวลาของ GitHub ช้าไม่แน่นอน (วัดจริงช้า 150-175 นาทีตอนตั้ง 07:00)
+    จึงตั้งให้เริ่มก่อนเวลามาก ๆ แล้วมารอเองตรงนี้ วันที่ GitHub ตรงเวลา
+    ข้อความจะถึง ~07:00 ส่วนวันที่ช้าก็ส่งทันที ไม่ต้องรออะไร
+    ดึงข้อมูลหลังรอเสร็จ ไม่ใช่ก่อนรอ — พยากรณ์จะได้สดที่สุด ณ เวลาส่ง
+    """
+    now = now_th().replace(tzinfo=None)
+    target = now.replace(hour=DAILY_SEND_AT[0], minute=DAILY_SEND_AT[1],
+                         second=0, microsecond=0)
+    wait = (target - now).total_seconds()
+    if 0 < wait <= 3 * 3600:          # รอเฉพาะกรณีเริ่มก่อนเวลาในเช้าเดียวกัน
+        print(f"  เริ่มก่อนเวลา รออีก {wait/60:.0f} นาที ถึง {target:%H:%M} ค่อยส่ง")
+        time.sleep(wait)
+
+
+def retry(fn, label, tries=3, gap_sec=30):
+    """
+    เรียก fn ซ้ำจนกว่าจะได้ค่าที่ไม่ว่าง (สูงสุด tries ครั้ง เว้น gap_sec วินาที)
+
+    สรุปเช้าส่งวันละครั้ง ถ้า API สะดุดครั้งเดียวแล้วเลิกเลย = ทั้งวันไม่มีสรุป
+    (เกิดจริงวันที่ 8 และ 10 ก.ย. 2569)
+    """
+    out = None
+    for i in range(1, tries + 1):
+        out = fn()
+        if out:
+            return out
+        if i < tries:
+            print(f"  {label} ไม่สำเร็จ (ครั้งที่ {i}/{tries}) ลองใหม่ใน {gap_sec} วินาที")
+            time.sleep(gap_sec)
+    return out
+
+
 def build_daily_summary(day, tmd_warning=None):
     """ประกอบข้อความสรุปอากาศประจำวัน — คืน str"""
     # ตัดชั่วโมงที่ผ่านไปแล้วออกก่อนทุกอย่าง
@@ -1241,7 +1283,13 @@ def build_daily_summary(day, tmd_warning=None):
 
     L = []
     L.append(f"🌤️ <b>สรุปอากาศวันนี้ · {PLACE_NAME}</b>")
-    L.append(f"{thai_date(day['date'])}\n")
+    # ถ้า GitHub ปล่อยให้รันช้า ต้องบอกคนอ่าน ไม่ให้เข้าใจว่าเป็นข้อมูลตอนเช้า
+    # และให้รู้ว่าช่วงที่ผ่านไปแล้วถูกตัดออกจากสรุป
+    if (now.hour, now.minute) > DAILY_LATE_AFTER:
+        L.append(f"{thai_date(day['date'])}\n"
+                 f"<i>(ส่งช้า — ข้อมูล ณ {now:%H:%M} น. สรุปเฉพาะช่วงที่เหลือของวัน)</i>\n")
+    else:
+        L.append(f"{thai_date(day['date'])}\n")
 
     # ภาพรวมต้องมาจากชั่วโมงที่ "เหลือ" ของวัน ไม่ใช่รหัสระดับวันจาก API
     # เพราะรหัสระดับวันรวมชั่วโมงที่ผ่านไปแล้ว ทำให้เกิดข้อความขัดกันเอง เช่น
@@ -1670,14 +1718,15 @@ def main():
     # -----------------------------------------------------------------
     if args.daily:
         print(f"[{now_th():%Y-%m-%d %H:%M:%S}] สรุปอากาศประจำวัน {PLACE_NAME}")
-        day = fetch_day_outlook()
+        wait_for_daily_time()
+        day = retry(fetch_day_outlook, "ดึงข้อมูลรายวัน")
         if not day:
             print("  ดึงข้อมูลไม่ได้ ไม่ส่ง")
             sys.exit(1)
         text = build_daily_summary(day, fetch_tmd_warning())
         print("--- ข้อความ ---")
         print(text)
-        sys.exit(0 if send_telegram(text) else 1)
+        sys.exit(0 if retry(lambda: send_telegram(text), "ส่ง Telegram") else 1)
 
     if args.watch:
         watch_loop(args.watch, args.every)
