@@ -4126,3 +4126,12 @@
 2026-09-24 22:45,89,74,yes,no,,5.9,27.9,97,2,4,27.9,23,1700,-2.3,radar_now,radar_now|rain|pressure,no
 2026-09-24 22:50,95,78,yes,no,,5.9,27.9,97,3,4,27.9,23,1700,-2.3,radar_now,radar_now|rain|pressure,no
 2026-09-24 22:55,95,78,yes,no,,5.9,27.9,97,3,4,27.9,23,1700,-2.3,radar_now,radar_now|rain|pressure,no
+2026-09-25 02:17,100,100,yes,no,,3.4,6.7,100,3,4,3.6,36,1050,0.8,radar_now,radar_now,no
+2026-09-25 02:22,100,100,yes,no,,3.4,6.7,100,3,4,3.6,36,1050,0.8,radar_now,radar_now|rain,no
+2026-09-25 02:27,100,100,yes,no,,3.4,6.7,100,3,4,3.6,36,1050,0.8,radar_now,radar_now|rain,no
+2026-09-25 02:32,100,100,yes,no,,3.4,6.7,100,3,4,3.6,36,1050,0.8,radar_now,radar_now|rain,no
+2026-09-25 02:37,100,100,yes,no,,3.4,6.7,100,3,4,3.6,39,1050,0.8,radar_now,radar_now|rain,no
+2026-09-25 02:43,100,97,yes,no,,3.4,6.7,100,3,4,3.6,39,1050,0.8,radar_now,radar_now|rain,no
+2026-09-25 02:48,100,97,yes,no,,3.4,6.7,100,3,4,3.6,39,1050,0.8,radar_now,radar_now|rain,no
+2026-09-25 02:53,100,96,yes,no,,3.4,6.7,100,3,4,3.6,39,1050,0.8,radar_now,radar_now|rain,no
+2026-09-25 02:58,100,96,yes,no,,6.7,12.7,100,3,4,3.6,36,710,0.8,radar_now,radar_now|rain,no
