@@ -4216,3 +4216,12 @@
 2026-09-26 13:35,100,100,yes,no,,3.5,4.4,100,3,4,1.4,58,1070,-1.0,radar_now,radar_now|rain|gust,no
 2026-09-26 13:41,100,100,yes,no,,3.5,4.4,100,3,4,1.4,58,1070,-1.0,radar_now,radar_now|rain|gust,no
 2026-09-26 13:46,100,100,yes,no,,3.5,4.4,100,3,4,1.4,58,1070,-1.0,radar_now,radar_now|rain|gust,no
+2026-09-26 18:17,100,93,yes,no,,1.1,10.7,99,2,4,0.5,45,870,2.5,radar_now,radar_now|gust,yes
+2026-09-26 18:22,100,91,yes,no,,1.1,10.7,99,2,4,0.5,45,870,2.5,radar_now,radar_now|rain|gust,no
+2026-09-26 18:27,100,91,yes,no,,1.1,10.7,99,2,4,0.5,45,870,2.5,radar_now,radar_now|rain|gust,no
+2026-09-26 18:32,100,90,yes,no,,0.9,10.7,99,1,4,0.5,45,870,2.5,radar_now,radar_now|gust,no
+2026-09-26 18:37,100,90,yes,no,,0.9,10.7,99,1,4,0.5,45,870,2.5,radar_now,radar_now|gust,no
+2026-09-26 18:43,100,89,yes,no,,0.9,10.7,99,1,4,0.5,45,870,2.5,radar_now,radar_now|gust,no
+2026-09-26 18:48,100,89,yes,no,,0.9,10.7,99,1,4,0.5,45,870,2.5,radar_now,radar_now|gust,no
+2026-09-26 18:53,100,86,yes,no,,0.9,10.7,100,1,4,0.5,45,870,2.5,radar_now,radar_now|gust,no
+2026-09-26 18:58,100,86,yes,no,,0.9,10.7,100,1,4,0.5,45,870,2.5,radar_now,radar_now|gust,no
