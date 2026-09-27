@@ -4270,3 +4270,12 @@
 2026-09-27 09:26,100,87,yes,no,,4.1,4.2,100,3,4,2.7,36,1240,-2.1,radar_now,radar_now|rain|pressure,no
 2026-09-27 09:31,100,89,yes,no,,4.1,4.2,100,3,4,2.7,36,1240,-2.1,radar_now,radar_now|rain|pressure,no
 2026-09-27 09:36,100,89,yes,no,,4.1,4.2,100,3,4,2.7,36,1240,-2.1,radar_now,radar_now|rain|pressure,no
+2026-09-27 15:02,100,74,yes,no,,3.1,22.6,100,3,4,22.6,42,1110,2.3,radar_now,radar_now|gust,yes
+2026-09-27 15:07,100,74,yes,no,,3.1,22.6,100,3,4,22.6,42,1110,2.3,radar_now,radar_now|rain|gust,no
+2026-09-27 15:12,99,74,yes,no,,3.1,22.6,100,3,4,22.6,42,1110,2.3,radar_now,radar_now|rain|gust,no
+2026-09-27 15:17,99,74,yes,no,,3.1,22.6,100,3,4,22.6,42,1110,2.3,radar_now,radar_now|rain|gust,no
+2026-09-27 15:22,81,80,yes,no,,3.1,22.6,100,3,4,22.6,42,1110,2.3,radar_now,radar_now|rain|gust,no
+2026-09-27 15:27,81,80,yes,no,,3.1,22.6,100,3,4,22.6,42,1110,2.3,radar_now,radar_now|rain|gust,no
+2026-09-27 15:32,88,86,yes,no,,3.1,22.6,100,3,4,22.6,42,1110,2.3,radar_now,radar_now|rain|gust,no
+2026-09-27 15:37,88,86,yes,no,,3.1,22.6,100,3,4,22.6,42,1110,2.3,radar_now,radar_now|rain|gust,no
+2026-09-27 15:42,94,89,yes,no,,3.1,22.6,100,3,4,22.6,42,1110,2.3,radar_now,radar_now|rain|gust,no
