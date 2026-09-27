@@ -239,6 +239,7 @@
       <div class="why">หาช่วงที่ฝนต่ำกว่า 0.2 มม./ชม. ติดต่อกัน 6 ชม.ขึ้นไป
         — คอนกรีตสดต้องการเวลาแห้ง 4-6 ชม. ฝนใน 2 ชม.แรกหลังเททำผิวหน้าเสียหาย</div>
       <div class="pourList" id="pourList"></div>
+      <div class="pourNone" id="pourRadarNote" style="display:none;margin-top:7px"></div>
       <div class="pourBar" id="pourBar"></div>
       <div class="pourTicks" id="pourTicks"></div>
     </div>
@@ -337,6 +338,7 @@
   <div class="note">
     <b>หมายเหตุ</b><br>
     • ตัวเลข กราฟ และแผนที่พยากรณ์ คำนวณจากพิกัดที่เลือกโดยตรง (Open-Meteo — โมเดล ECMWF/GFS) เปลี่ยนตำแหน่งแล้วอัปเดตทันที<br>
+    • คำตัดสิน 3 ชม.ข้างหน้าใช้โมเดล<b>ร่วมกับเรดาร์จริง</b> (RainViewer วงแคบ 6 กม. / วงกว้าง 25 กม. เกณฑ์เดียวกับบอท Telegram) ทดสอบย้อนหลัง 3 ส.ค.-27 ก.ย. 2569 ที่บางปะกง: จับฝนได้ 96% (เดิม 81%) · บอก ✅ ไม่มีฝน แล้วถูก 80% (เดิม 65%) · ถ้าอ่านเรดาร์ไม่ได้หรือพิกัดอยู่นอกเขตเรดาร์ จะตัดสินจากโมเดลอย่างเดียวเหมือนเดิม<br>
     • แผนที่พยากรณ์เป็นค่าจากโมเดล ความละเอียดประมาณ 15-25 กม./ช่อง จึงเห็นเป็นภาพรวม ไม่ละเอียดเท่าเรดาร์จริง — ใช้ดูทิศทางและช่วงเวลาที่ฝนจะมา<br>
     • เรดาร์จริง (RainViewer) ซ้อนได้จากช่องติ๊ก แต่ผู้ให้บริการเปิดให้ใช้ฟรีถึงระดับซูม 7 ภาพจึงเบลอเมื่อซูมเข้าใกล้ และมีเฉพาะข้อมูลปัจจุบัน<br>
     • ภาพดาวเทียมเป็น http ถ้าไม่ขึ้น ให้กดไอคอนข้าง URL แล้วอนุญาต "เนื้อหาที่ไม่ปลอดภัย" หรือกดลิงก์เปิดหน้าเต็ม<br>
@@ -793,6 +795,123 @@ function removeRadarLayer(){
   if(radarLayer){ map.removeLayer(radarLayer); radarLayer=null; }
 }
 
+/* =====================================================================
+   เรดาร์ตรงจุด — อ่านพิกเซลภาพเรดาร์รอบตำแหน่ง แล้วใช้ตัดสินร่วมกับโมเดล
+   ---------------------------------------------------------------------
+   ยกเกณฑ์มาจาก check_radar_pixel() ของบอท Telegram ทุกตัวเลข
+   ทำไมต้องมี: ทดสอบย้อนหลัง 3 ส.ค.-27 ก.ย. 2569 เทียบกับเรดาร์ที่ไซต์ 394 ครั้ง
+     ใช้โมเดลอย่างเดียว (แบบเดิม)  จับฝนได้ 81%  บอก "ไม่มีฝน" แล้วถูก 65%
+     โมเดล + เรดาร์ในรัศมี 25 กม.  จับฝนได้ 96%  บอก "ไม่มีฝน" แล้วถูก 80%
+   เพราะฝนฟ้าคะนองก้อนเล็กกว่าช่องของโมเดล โมเดลจึงมักวางก้อนผิดที่ผิดเวลา
+   แต่เรดาร์เห็นก้อนที่มีอยู่จริง
+   เรดาร์ใช้ "เพิ่มความระวัง" อย่างเดียว ไม่เคยลบคำเตือนของโมเดล — ถ้าพิกัดอยู่
+   นอกเขตเรดาร์หรือโหลดภาพไม่ได้ ผลจะเหมือนแบบเดิมทุกอย่าง
+   ===================================================================== */
+const RADAR_ZOOM = 7;            // ชั้นฟรีของ RainViewer รองรับถึงซูม 7 เท่านั้น
+const RADAR_OVER_KM = 6;         // วงแคบ = ฝนอยู่เหนือจุดนี้จริง
+const RADAR_NEAR_KM = 25;        // วงกว้าง = มีฝนอยู่แถวนี้
+const RADAR_OVER_COVER = 0.25;   // ฝนต้องคลุมวงแคบเกิน 25%
+const RADAR_NEAR_COVER = 0.02;   // วงกว้างแค่ 2% ก็นับ
+const RADAR_ALPHA_MIN = 70;      // ความเข้มสีขั้นต่ำที่นับเป็นฝน (ตัดละอองจาง ๆ)
+const RADAR_ETA_WARN = 60;       // กลุ่มฝนจะถึงภายในกี่นาทีจึงเตือนว่า "กำลังมา"
+
+let radarNow = null;             // ผลล่าสุด หรือ null ถ้ายังไม่มี/อ่านไม่ได้
+let radarToken = 0;              // กันผลของตำแหน่งเก่ามาทับเมื่อผู้ใช้ย้ายตำแหน่งเร็ว ๆ
+
+function loadTileImg(url){
+  return new Promise((res, rej) => {
+    const im = new Image();
+    im.crossOrigin = 'anonymous';          // ต้องมี ไม่งั้นอ่านพิกเซลไม่ได้
+    im.onload = () => res(im);
+    im.onerror = () => rej(new Error('โหลดภาพเรดาร์ไม่ได้'));
+    im.src = url;
+  });
+}
+
+/* วัดค่าจากภาพเรดาร์หนึ่งเฟรม — วงกลมอาจคร่อมขอบ tile จึงต่อ tile ข้างเคียงลง canvas ก่อน */
+async function radarFrameStats(host, path, lat, lon){
+  const T = 256, n = 2 ** RADAR_ZOOM;
+  const gx = (lon + 180) / 360 * n * T;
+  const gy = (1 - Math.asinh(Math.tan(lat * Math.PI / 180)) / Math.PI) / 2 * n * T;
+  const kmPx = 40075 / n * Math.cos(lat * Math.PI / 180) / T;
+  const rO = Math.max(2, Math.floor(RADAR_OVER_KM / kmPx));
+  const rN = Math.max(3, Math.floor(RADAR_NEAR_KM / kmPx));
+
+  const tx0 = Math.floor((gx - rN) / T), tx1 = Math.floor((gx + rN) / T);
+  const ty0 = Math.floor((gy - rN) / T), ty1 = Math.floor((gy + rN) / T);
+  const cv = document.createElement('canvas');
+  cv.width = (tx1 - tx0 + 1) * T; cv.height = (ty1 - ty0 + 1) * T;
+  const ctx = cv.getContext('2d', {willReadFrequently: true});
+  const jobs = [];
+  for(let tx = tx0; tx <= tx1; tx++) for(let ty = ty0; ty <= ty1; ty++){
+    // สี 4 + smooth=0 เหมือนบอท — การเกลี่ยสีทำให้ขอบก้อนฝนพองกว่าของจริง
+    jobs.push(loadTileImg(`${host}${path}/${T}/${RADAR_ZOOM}/${tx}/${ty}/4/0_0.png`)
+      .then(im => ctx.drawImage(im, (tx - tx0) * T, (ty - ty0) * T)));
+  }
+  await Promise.all(jobs);
+
+  const cx = Math.floor(gx) - tx0 * T, cy = Math.floor(gy) - ty0 * T;
+  const px = ctx.getImageData(cx - rN, cy - rN, 2 * rN + 1, 2 * rN + 1).data;
+  const w = 2 * rN + 1;
+  let hitO = 0, totO = 0, hitN = 0, totN = 0, sx = 0, sy = 0;
+  for(let dy = -rN; dy <= rN; dy++){
+    for(let dx = -rN; dx <= rN; dx++){
+      const d2 = dx * dx + dy * dy;
+      if(d2 > rN * rN) continue;                       // นับเฉพาะในวงกลม
+      const wet = px[((dy + rN) * w + (dx + rN)) * 4 + 3] > RADAR_ALPHA_MIN;
+      totN++;
+      if(wet){ hitN++; sx += dx; sy += dy; }
+      if(d2 <= rO * rO){ totO++; if(wet) hitO++; }
+    }
+  }
+  return {
+    over: totO ? hitO / totO : 0,
+    near: totN ? hitN / totN : 0,
+    dist: hitN ? Math.hypot(sx / hitN, sy / hitN) : null,  // ระยะถึงกึ่งกลางมวลฝน (พิกเซล)
+    kmPx
+  };
+}
+
+async function loadRadarNowcast(){
+  const my = ++radarToken;
+  const lat = LOC.lat, lon = LOC.lon;
+  try{
+    const r = await fetch('https://api.rainviewer.com/public/weather-maps.json');
+    if(!r.ok) throw new Error('HTTP ' + r.status);
+    const d = await r.json();
+    const host = d.host || 'https://tilecache.rainviewer.com';
+    const frames = ((d.radar && d.radar.past) || []).slice(-3);
+    if(!frames.length) throw new Error('ไม่มีภาพเรดาร์');
+
+    const stats = await Promise.all(frames.map(f =>
+      radarFrameStats(host, f.path, lat, lon).catch(() => null)));
+    if(my !== radarToken) return;                 // ผู้ใช้ย้ายตำแหน่งไปแล้ว ทิ้งผลนี้
+    const last = stats[stats.length - 1];
+    if(!last) throw new Error('อ่านภาพเรดาร์ล่าสุดไม่ได้');
+
+    /* API สาธารณะไม่มีเฟรมพยากรณ์ล่วงหน้าแล้ว จึงประเมินเองจาก 3 เฟรมล่าสุด
+       ว่ากึ่งกลางมวลฝนขยับเข้าหาเราเร็วแค่ไหน (วิธีเดียวกับบอท) */
+    let eta = null, distKmNow = null;
+    const over = last.over >= RADAR_OVER_COVER, near = last.near >= RADAR_NEAR_COVER;
+    const ds = stats.filter(s => s && s.dist != null).map(s => s.dist);
+    if(last.dist != null) distKmNow = last.dist * last.kmPx;
+    if(!over && near && ds.length >= 2){
+      let gap = 10;
+      const a = frames[frames.length - 2].time, b = frames[frames.length - 1].time;
+      if(a && b) gap = Math.abs(b - a) / 60 || 10;
+      const speed = (ds[0] - ds[ds.length - 1]) / (ds.length - 1);   // + = เข้าใกล้
+      if(speed > 0.3) eta = Math.round(ds[ds.length - 1] / speed * gap);
+    }
+    radarNow = {ok: true, lat, lon, over, near, coverOver: last.over, coverNear: last.near,
+                eta, distKm: distKmNow, time: new Date(frames[frames.length - 1].time * 1000)};
+  }catch(e){
+    if(my !== radarToken) return;
+    radarNow = {ok: false, err: e.message};
+  }
+  renderRadarStat();
+  renderVerdict();
+}
+
 /* --- โหลดกริดพยากรณ์ฝนรอบตำแหน่ง --- */
 async function loadForecastGrid(){
   if(gridBusy) return;
@@ -970,6 +1089,97 @@ async function fetchForecast(){
 }
 function fmt(v,dp=1){ return (v===null||v===undefined)?'—':Number(v).toFixed(dp); }
 
+/* ค่าจากโมเดลรอบล่าสุด — เก็บไว้ให้ renderVerdict() ใช้ร่วมกับผลเรดาร์
+   (โมเดลกับเรดาร์โหลดเสร็จไม่พร้อมกัน ใครเสร็จทีหลังก็เรียกวาดใหม่) */
+let lastModel = null;
+
+/* ผลเรดาร์ใช้ได้เฉพาะตำแหน่งที่วัดมา — ย้ายตำแหน่งแล้วต้องรอผลใหม่ */
+function radarForHere(){
+  const R = radarNow;
+  return (R && R.ok && R.lat === LOC.lat && R.lon === LOC.lon) ? R : null;
+}
+
+function renderRadarStat(){
+  const el = document.getElementById('radarStat');
+  if(!el) return;
+  const R = radarForHere();
+  if(!R){
+    const failed = radarNow && !radarNow.ok;
+    el.className = 'stat';
+    el.innerHTML = `<div class="lab">เรดาร์ตรงจุดตอนนี้</div>
+      <div class="val" style="font-size:17px">${failed ? '—' : '…'}</div>
+      <div class="sub">${failed ? 'อ่านเรดาร์ไม่ได้ ใช้โมเดลอย่างเดียว' : 'กำลังอ่านภาพเรดาร์'}</div>`;
+    return;
+  }
+  const t = `${pad2(R.time.getHours())}:${pad2(R.time.getMinutes())}`;
+  let sub = `รัศมี 25 กม. ${Math.round(R.coverNear*100)}% · ภาพ ${t}`;
+  if(R.eta != null) sub += ` · ถึงใน~${R.eta} นาที`;
+  el.className = 'stat ' + (R.over ? 'danger' : (R.near ? 'warn' : ''));
+  el.innerHTML = `<div class="lab">เรดาร์เหนือพื้นที่ (6 กม.)</div>
+    <div class="val">${Math.round(R.coverOver*100)}<small> %</small></div>
+    <div class="sub">${sub}</div>`;
+}
+
+/* =====================================================================
+   คำตัดสิน 3 ชม.ข้างหน้า = โมเดล + เรดาร์
+   เรดาร์ยกระดับความระวังได้อย่างเดียว ไม่เคยลบคำเตือนของโมเดล
+   ===================================================================== */
+function renderVerdict(){
+  if(!lastModel) return;
+  const {rain3, maxP3, maxG} = lastModel;
+  const R = radarForHere();
+  const coming = !!(R && R.eta != null && R.eta <= RADAR_ETA_WARN);
+  const modelRain = rain3 > 0.2 || maxP3 >= 60;
+  let head, body, klass;
+
+  if(R && R.over){
+    klass = rain3>=7.5 ? 'heavy' : 'rain';
+    head = '🌧️ เรดาร์เห็นฝนตกอยู่เหนือพื้นที่ตอนนี้';
+    body = rain3>=7.5
+      ? 'โมเดลคาดว่าฝนหนักต่อเนื่องใน 3 ชม. · หยุดงานเทคอนกรีต งานฉาบ งานสี งานดิน · คลุมวัสดุ เก็บเครื่องมือไฟฟ้า · ตรวจทางระบายน้ำ'
+      : 'หยุดงานภายนอกที่กลัวน้ำ คลุมวัสดุ · ฝนฟ้าคะนองมักหมดใน 30-60 นาที ให้ดูตัวเลขเรดาร์ลดลงก่อนกลับมาทำงาน';
+  }else if(rain3>=7.5){
+    klass='heavy'; head='⛈️ ฝนหนักกำลังจะมาใน 3 ชม.ข้างหน้า';
+    body='ควรเลื่อนงานเทคอนกรีต งานฉาบ งานสี และงานดิน · คลุมวัสดุและเก็บเครื่องมือไฟฟ้า · ตรวจทางระบายน้ำรอบไซต์';
+  }else if(rain3>=2){
+    klass='rain'; head='🌧️ มีฝนปานกลางใน 3 ชม.ข้างหน้า';
+    body='งานภายนอกที่กลัวน้ำควรเร่งปิดงานหรือเตรียมผ้าใบคลุม · งานเทคอนกรีตควรประเมินอีกครั้งก่อนเริ่ม';
+  }else if(modelRain){
+    klass='rain'; head='🌦️ มีโอกาสฝนเบาใน 3 ชม.ข้างหน้า';
+    body='ยังทำงานได้ แต่ควรเตรียมผ้าใบไว้ใกล้มือ และดูแผนที่พยากรณ์ซ้ำอีกครั้งภายใน 1 ชม.';
+  }else if(coming){
+    klass='rain'; head=`🌦️ กลุ่มฝนกำลังเคลื่อนเข้ามา — อีกราว ${R.eta} นาที`;
+    body='โมเดลยังไม่เห็นฝน แต่เรดาร์เห็นกลุ่มฝนขยับเข้าหาพื้นที่ · อย่าเพิ่งเริ่มงานเทคอนกรีต/ทาสี · เตรียมผ้าใบคลุมให้พร้อม';
+  }else if(R && R.near){
+    klass='rain'; head='🌦️ โมเดลไม่เห็นฝน แต่เรดาร์เห็นกลุ่มฝนในรัศมี 25 กม.';
+    body='ยังทำงานได้ แต่ก่อนเริ่มงานที่กลัวฝน (เทคอนกรีต ทาสี กันซึม) ให้เช็คเรดาร์อีกรอบใน 30 นาที · ฝนฟ้าคะนองก่อตัวและเคลื่อนเร็วกว่าที่โมเดลจับได้';
+  }else{
+    klass='clear'; head='✅ ไม่มีสัญญาณฝนใน 3 ชม.ข้างหน้า';
+    body='เหมาะกับงานภายนอก งานเทคอนกรีต และงานที่ต้องการผิวแห้ง';
+  }
+  if(coming && modelRain) body += ` · 📡 เรดาร์เห็นกลุ่มฝนกำลังเข้ามา อีกราว ${R.eta} นาที`;
+  if(maxG>=40) body+=` · 💨 ลมกระโชกถึง ${maxG.toFixed(0)} กม./ชม. — ระวังงานนั่งร้าน เครน และผ้าใบคลุมที่อาจปลิว`;
+
+  let src;
+  if(R) src = `ตัดสินจากโมเดล + เรดาร์ (ภาพเรดาร์ ${pad2(R.time.getHours())}:${pad2(R.time.getMinutes())} น.)`;
+  else if(radarNow && radarNow.ok === false)
+    src = '⚠️ อ่านเรดาร์ไม่ได้ — ตัดสินจากโมเดลอย่างเดียว ความมั่นใจต่ำกว่าปกติ';
+  else src = 'กำลังอ่านเรดาร์…';
+
+  const v=document.getElementById('verdict');
+  v.className=klass;
+  v.innerHTML=`<b>${head}</b> <span style="font-size:12.5px;color:#6b7280">— ที่ ${LOC.name}</span><br>${body}`
+    + `<div style="font-size:11.5px;color:#6b7280;margin-top:6px">${src}</div>`;
+
+  /* ช่วงเทคอนกรีตคิดจากโมเดลอย่างเดียว — ถ้าเรดาร์เห็นฝนใกล้ ช่วงที่เริ่มตอนนี้อาจไม่แห้งจริง */
+  const pn = document.getElementById('pourRadarNote');
+  if(R && (R.over || R.near || coming)){
+    pn.style.display = 'block';
+    pn.innerHTML = `📡 <b>ตอนนี้เรดาร์เห็นฝน${R.over ? 'เหนือพื้นที่' : 'ในรัศมี 25 กม.'}</b>`
+      + ' — ช่วงแห้งที่เริ่มตอนนี้อาจไม่แห้งจริง รอให้เรดาร์โล่งก่อนล็อกคิวรถโม่';
+  }else pn.style.display = 'none';
+}
+
 function render(d){
   const cur=d.current||{}, H=d.hourly, D=d.daily, now=new Date();
   let idx=H.time.findIndex(t=>new Date(t)>=now);
@@ -1009,25 +1219,12 @@ function render(d){
       <div class="lab">พรุ่งนี้ / มะรืน</div>
       <div class="val" style="font-size:17px">${(D.precipitation_sum[1]||0).toFixed(0)} / ${(D.precipitation_sum[2]||0).toFixed(0)}<small> มม.</small></div>
       <div class="sub">โอกาสฝน ${D.precipitation_probability_max[1]||0}% / ${D.precipitation_probability_max[2]||0}%</div>
-    </div>`;
+    </div>
+    <div class="stat" id="radarStat"></div>`;
 
-  const v=document.getElementById('verdict'); let head,body,klass;
-  if(rain3>=7.5){
-    klass='heavy'; head='⛈️ ฝนหนักกำลังจะมาใน 3 ชม.ข้างหน้า';
-    body='ควรเลื่อนงานเทคอนกรีต งานฉาบ งานสี และงานดิน · คลุมวัสดุและเก็บเครื่องมือไฟฟ้า · ตรวจทางระบายน้ำรอบไซต์';
-  }else if(rain3>=2){
-    klass='rain'; head='🌧️ มีฝนปานกลางใน 3 ชม.ข้างหน้า';
-    body='งานภายนอกที่กลัวน้ำควรเร่งปิดงานหรือเตรียมผ้าใบคลุม · งานเทคอนกรีตควรประเมินอีกครั้งก่อนเริ่ม';
-  }else if(rain3>0.2||maxP3>=60){
-    klass='rain'; head='🌦️ มีโอกาสฝนเบาใน 3 ชม.ข้างหน้า';
-    body='ยังทำงานได้ แต่ควรเตรียมผ้าใบไว้ใกล้มือ และดูแผนที่พยากรณ์ซ้ำอีกครั้งภายใน 1 ชม.';
-  }else{
-    klass='clear'; head='✅ ไม่มีสัญญาณฝนใน 3 ชม.ข้างหน้า';
-    body='เหมาะกับงานภายนอก งานเทคอนกรีต และงานที่ต้องการผิวแห้ง';
-  }
-  if(maxG>=40) body+=` · 💨 ลมกระโชกถึง ${maxG.toFixed(0)} กม./ชม. — ระวังงานนั่งร้าน เครน และผ้าใบคลุมที่อาจปลิว`;
-  v.className=klass;
-  v.innerHTML=`<b>${head}</b> <span style="font-size:12.5px;color:#6b7280">— ที่ ${LOC.name}</span><br>${body}`;
+  lastModel = {rain3, maxP3, maxG};
+  renderRadarStat();
+  renderVerdict();
 
   const bars=[], maxRain=Math.max(1,...H.precipitation.slice(idx,idx+24).map(x=>x||0));
   for(let i=idx;i<Math.min(idx+24,H.time.length);i++){
@@ -1088,6 +1285,7 @@ const GRID_MIN_INTERVAL = 30*60*1000;   // อย่างน้อย 30 นา
 
 function refreshAll(force){
   fetchForecast();
+  loadRadarNowcast();
   renderRadarCards();
   renderLinks();
   refreshSatellite();
