@@ -452,20 +452,59 @@ document.getElementById('btnGeo').addEventListener('click', ()=>{
   }
   msg.className='geo-msg';
   msg.textContent='กำลังขอตำแหน่ง… (ถ้ามีป๊อปอัปขออนุญาต ให้กด "อนุญาต")';
-  navigator.geolocation.getCurrentPosition(
-    p=>{
+  // เครื่องมักตอบพิกัดหยาบจาก Wi-Fi/เสาสัญญาณ/IP มาก่อน (คลาดได้หลายสิบ กม.) แล้ว GPS จริงค่อยตามมา
+  // จึงเฝ้ารอสูงสุด GEO_WAIT_MS เก็บค่าที่แม่นที่สุด และไม่ใช้พิกัดที่หยาบเกิน GEO_MAX_ACC ม. โดยอัตโนมัติ
+  const GEO_GOOD_ACC=100, GEO_MAX_ACC=3000, GEO_WAIT_MS=20000;
+  let best=null, done=false, wid=null;
+  const finish=()=>{
+    if(done) return; done=true;
+    if(wid!==null) navigator.geolocation.clearWatch(wid);
+    clearTimeout(timer);
+    if(!best){
+      msg.className='geo-msg err';
+      msg.textContent='ระบุตำแหน่งอัตโนมัติไม่สำเร็จ — หมดเวลารอ · ใช้วิธีเลือกจากรายการ ค้นหาชื่อ หรือคลิกบนแผนที่แทนได้เลย';
+      return;
+    }
+    const {latitude:lat, longitude:lon, accuracy:acc}=best.coords;
+    const use=()=>{
+      setLoc(lat, lon, null, {fromGPS:true});
+      if(map) map.setView([lat,lon], 9);
+    };
+    if(acc<=GEO_MAX_ACC){
       msg.className='geo-msg';
-      msg.textContent=`ได้ตำแหน่งแล้ว (ความแม่นยำ ±${Math.round(p.coords.accuracy)} ม.) — ข้อมูลทั้งหน้าอัปเดตตามตำแหน่งนี้แล้ว`;
-      setLoc(p.coords.latitude, p.coords.longitude, null, {fromGPS:true});
-      if(map) map.setView([p.coords.latitude,p.coords.longitude], 9);
+      msg.textContent=`ได้ตำแหน่งแล้ว (ความแม่นยำ ±${Math.round(acc)} ม.) — ข้อมูลทั้งหน้าอัปเดตตามตำแหน่งนี้แล้ว`;
+      use();
+      return;
+    }
+    msg.className='geo-msg err';
+    msg.innerHTML=`⚠️ เครื่องให้ตำแหน่งแบบหยาบ (คลาดได้ ±${(acc/1000).toFixed(1)} กม. — มักมาจาก Wi-Fi/IP ไม่ใช่ GPS) `+
+      `จึงยังไม่เปลี่ยนตำแหน่งให้ · แก้: เปิด Location/GPS ของเครื่อง และให้เบราว์เซอร์ใช้ "ตำแหน่งที่แม่นยำ" แล้วกดใหม่ `+
+      `หรือเลือกจากรายการแทน · <a href="#" id="geoUseAnyway">ใช้ตำแหน่งนี้อยู่ดี (${lat.toFixed(3)}, ${lon.toFixed(3)})</a>`;
+    document.getElementById('geoUseAnyway').onclick=ev=>{
+      ev.preventDefault();
+      msg.className='geo-msg';
+      msg.textContent=`ใช้ตำแหน่งหยาบ (±${(acc/1000).toFixed(1)} กม.) ตามที่เลือก`;
+      use();
+    };
+  };
+  const timer=setTimeout(finish, GEO_WAIT_MS);
+  wid=navigator.geolocation.watchPosition(
+    p=>{
+      if(!best || p.coords.accuracy<best.coords.accuracy) best=p;
+      if(best.coords.accuracy<=GEO_GOOD_ACC){ finish(); return; }
+      msg.className='geo-msg';
+      msg.textContent=`กำลังรอสัญญาณ GPS ให้แม่นขึ้น… ตอนนี้ ±${Math.round(best.coords.accuracy)} ม.`;
     },
     e=>{
+      if(best){ finish(); return; }
+      done=true; clearTimeout(timer);
+      if(wid!==null) navigator.geolocation.clearWatch(wid);
       msg.className='geo-msg err';
       const why={1:'คุณปฏิเสธสิทธิ์ หรือเบราว์เซอร์บล็อกเพราะเปิดไฟล์แบบ file:// ',
                  2:'หาตำแหน่งไม่ได้ ',3:'หมดเวลารอ '}[e.code]||'';
       msg.textContent=`ระบุตำแหน่งอัตโนมัติไม่สำเร็จ — ${why}· ใช้วิธีเลือกจากรายการ ค้นหาชื่อ หรือคลิกบนแผนที่แทนได้เลย`;
     },
-    {enableHighAccuracy:true, timeout:12000, maximumAge:300000});
+    {enableHighAccuracy:true, timeout:GEO_WAIT_MS, maximumAge:0});
 });
 
 const sel=document.getElementById('presetSel');
