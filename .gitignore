@@ -40,3 +40,6 @@ Thumbs.db
 desktop.ini
 .vscode/
 .idea/
+
+# --- key ฝั่งเว็บแอป (Google WeatherNext 3) — ไม่อัปขึ้น GitHub แต่ไปกับการลากโฟลเดอร์ pwa/ ขึ้น Netlify ---
+pwa/config.js

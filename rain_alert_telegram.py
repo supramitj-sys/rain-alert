@@ -152,6 +152,28 @@ TMD_TOKEN = _secret("TMD_TOKEN", "tmd_token.txt")
 USE_TMD = bool(TMD_TOKEN)
 MIN_MODEL_AGREE = 2        # ต้องมีอย่างน้อยกี่โมเดลเห็นตรงกันจึงจะเตือน
 
+# ---------------------------------------------------------------------
+#  Google WeatherNext 3 — ผ่าน Google Maps Platform Weather API
+# ---------------------------------------------------------------------
+#  โมเดล AI ของ Google DeepMind (ออก ก.ย. 2569) ละเอียด ~5 กม. อัปเดตทุกชั่วโมง
+#  Open-Meteo ยังให้แค่ WeatherNext 2 (25 กม. อัปเดต 12 ชม.) จึงต้องเรียกตรงจาก Google
+#  ต้องมี API key (บัญชีเรียกเก็บเงิน แต่ฟรี 10,000 ครั้ง/เดือน — ตั้งเพดานโควตาในคอนโซลกันเกิน)
+#  ใส่ไว้ใน GitHub Secrets ชื่อ GOOGLE_WEATHER_KEY หรือไฟล์ google_weather_key.txt (อยู่ใน .gitignore)
+#  ไม่มี key = ข้ามทั้งหมด ระบบเดิมทำงานเหมือนเดิมทุกอย่าง
+#
+#  ช่วงนี้ Google "แสดงเทียบ + จดบันทึก" เท่านั้น ยังไม่ร่วมโหวตเตือน (ไม่เข้า per_model/agree)
+#  เพราะดึงพยากรณ์ย้อนหลังของ Google มาทดสอบไม่ได้ ต้องเก็บ google_compare.csv ราว 2 สัปดาห์
+#  แล้วรัน analyze_google.py เทียบเรดาร์จริงก่อน ค่อยตัดสินว่าจะให้น้ำหนักเท่าไร
+# ---------------------------------------------------------------------
+GOOGLE_KEY = _secret("GOOGLE_WEATHER_KEY", "google_weather_key.txt")
+USE_GOOGLE = bool(GOOGLE_KEY)
+GOOGLE_URL = "https://weather.googleapis.com/v1/forecast/hours:lookup"
+GOOGLE_CACHE_MIN = 30      # โมเดลอัปเดตชั่วโมงละครั้ง ไม่ต้องยิงทุกรอบ 5 นาที (ประหยัดโควตาฟรี)
+GOOGLE_FAIL_COOLDOWN_MIN = 10   # ดึงพลาดแล้วพักก่อนลองใหม่ ไม่ยิงรัวทุก 5 นาทีตอน key ผิด/โควตาหมด
+GOOGLE_DRY_MM = 0.2        # Google ถือว่า "ไม่เห็นฝน" เมื่อฝน < ค่านี้
+GOOGLE_DRY_PROB = 30       # ...และโอกาสฝน < ค่านี้ (%)
+GOOGLE_LOG = "google_compare.csv"
+
 # --- ใช้ประโยชน์จากตัวแปรอื่นที่ TMD ให้มา นอกเหนือจากฝน ---
 # (อ้างอิง: https://data.tmd.go.th/nwpapi/doc/apidoc/location/forecast_hourly.html)
 TMD_PRESSURE_DROP_ALERT = 1.5   # hPa — ความกดอากาศลดลงเกินนี้ในช่วงที่ดึงมา
@@ -720,6 +742,171 @@ def merge_tmd(forecast, tmd):
     return forecast
 
 
+_GOOGLE_CACHE = {"at": None, "data": None, "fail_at": None}
+
+
+def _g_num(d, *path):
+    """ไล่คีย์ซ้อนอย่างปลอดภัย คืนตัวเลขหรือ None (กันโครงสร้างตอบกลับเปลี่ยนแล้วพังทั้งระบบ)"""
+    for k in path:
+        if not isinstance(d, dict):
+            return None
+        d = d.get(k)
+    return d if isinstance(d, (int, float)) and not isinstance(d, bool) else None
+
+
+def fetch_google_hourly(hours=24):
+    """
+    ดึงพยากรณ์รายชั่วโมงจาก Google Weather API (WeatherNext 3)
+
+    คืน dict {"YYYY-MM-DDTHH" (เวลาไทย): {mm, prob, thunder, gust, cloud}} หรือ None
+    - cache 30 นาที ในหน่วยความจำ (โหมด --watch วนเช็คทุก 5 นาทีในโปรเซสเดียว)
+    - ดึงพลาด → พัก 10 นาทีก่อนลองใหม่ ไม่ทำให้รอบเตือนพัง (คืน None แล้วข้ามไป)
+    - hours <= 24 = ขอหน้าเดียว (pageSize สูงสุดของ API คือ 24)
+    """
+    if not USE_GOOGLE:
+        return None
+    now = time.time()
+    c = _GOOGLE_CACHE
+    if c["data"] is not None and c["at"] and now - c["at"] < GOOGLE_CACHE_MIN * 60:
+        return c["data"]
+    if c["fail_at"] and now - c["fail_at"] < GOOGLE_FAIL_COOLDOWN_MIN * 60:
+        return c["data"]            # ใช้ของเก่าที่ยังมี (อาจเป็น None)
+    try:
+        r = requests.get(GOOGLE_URL, timeout=30, params={
+            "key": GOOGLE_KEY,
+            "location.latitude": LAT, "location.longitude": LON,
+            "hours": min(int(hours), 24), "pageSize": min(int(hours), 24),
+            "unitsSystem": "METRIC",
+        })
+        if r.status_code != 200:
+            # ไม่พิมพ์ URL เพราะมี key อยู่ในนั้น — พิมพ์เฉพาะรหัสกับข้อความจาก Google
+            try:
+                msg = (r.json().get("error") or {}).get("message", "")
+            except Exception:
+                msg = ""
+            raise RuntimeError(f"HTTP {r.status_code} {msg[:120]}")
+        data = r.json()
+    except Exception as e:
+        c["fail_at"] = now
+        # ข้อความ exception ของ requests อาจมี URL (พร้อม key) ติดมา → ตัด key ออกก่อนพิมพ์
+        err = str(e).replace(GOOGLE_KEY, "***")[:160]
+        print(f"  Google WeatherNext 3: ดึงไม่ได้ ({type(e).__name__}: {err})")
+        return c["data"]
+
+    out = {}
+    for h in data.get("forecastHours") or []:
+        st = (h.get("interval") or {}).get("startTime")
+        if not st:
+            continue
+        try:
+            t_utc = datetime.fromisoformat(st.replace("Z", "+00:00"))
+        except Exception:
+            continue
+        t_th = t_utc.astimezone(timezone(timedelta(hours=7)))
+        out[t_th.strftime("%Y-%m-%dT%H")] = {
+            "mm": _g_num(h, "precipitation", "qpf", "quantity") or 0.0,
+            "prob": _g_num(h, "precipitation", "probability", "percent") or 0,
+            "thunder": _g_num(h, "thunderstormProbability") or 0,
+            "gust": _g_num(h, "wind", "gust", "value") or 0,
+            "cloud": _g_num(h, "cloudCover"),
+        }
+    if not out:
+        c["fail_at"] = now
+        print("  Google WeatherNext 3: ตอบกลับมาแต่ไม่มีข้อมูลรายชั่วโมง")
+        return c["data"]
+    c.update(at=now, data=out, fail_at=None)
+    print(f"  Google WeatherNext 3: ได้ {len(out)} ชั่วโมง")
+    return out
+
+
+def merge_google(forecast, g):
+    """
+    แนบค่าของ Google ไว้ที่ f["google"] ของแต่ละชั่วโมง "เพื่อแสดงและจดบันทึกเท่านั้น"
+
+    จงใจไม่ยุ่งกับ per_model / agree / n_models / rain_mm → ทริกเกอร์เตือนทั้งหมดเหมือนเดิมทุกประการ
+    (ต่างจาก merge_tmd ที่เอาเสียงของ TMD เข้า consensus) จนกว่าจะวัดผลเทียบเรดาร์ได้
+    """
+    if not forecast or not g:
+        return forecast
+    hit = 0
+    for f in forecast:
+        e = g.get(f["time"].strftime("%Y-%m-%dT%H"))
+        if e is not None:
+            f["google"] = e
+            hit += 1
+    if hit:
+        print(f"  แนบค่า Google เทียบกับโมเดลหลักได้ {hit} ชั่วโมง")
+    return forecast
+
+
+def google_sees(e):
+    """จัดระดับสิ่งที่ Google เห็นในชั่วโมงเดียว: 'rain' / 'dry' / 'weak'"""
+    if e["mm"] >= RAIN_MM_ALERT and e["prob"] >= PROB_ALERT:
+        return "rain"
+    if e["mm"] < GOOGLE_DRY_MM and e["prob"] < GOOGLE_DRY_PROB:
+        return "dry"
+    return "weak"
+
+
+def google_alert_text(hours):
+    """
+    ต่อท้ายข้อความเตือนฝน: Google ว่าอย่างไรในชั่วโมงเดียวกับที่เราเตือน
+    คืน "" ถ้าไม่มีข้อมูล Google (ไม่ได้ตั้ง key หรือดึงไม่ได้)
+    """
+    es = [f["google"] for f in hours if f.get("google")]
+    if not es:
+        return ""
+    mm, pr = max(e["mm"] for e in es), max(e["prob"] for e in es)
+    th = max(e["thunder"] for e in es)
+    kinds = [google_sees(e) for e in es]
+    if "rain" in kinds:
+        verdict = "เห็นฝนด้วย ✓"
+    elif all(k == "dry" for k in kinds):
+        verdict = "⚖️ ไม่เห็นฝน (เห็นต่างจากโมเดลหลัก)"
+    else:
+        verdict = "เห็นฝนไม่ชัด"
+    extra = f" · ฟ้าคะนอง {th:.0f}%" if th >= 20 else ""
+    return f"\n🛰️ Google WeatherNext 3: {mm:.1f} มม. · โอกาส {pr:.0f}%{extra} — {verdict}"
+
+
+GOOGLE_COLUMNS = ["เวลา", "Google ฝนรวม(มม.)", "Google ฝนสูงสุด(มม./ชม.)", "Google โอกาสฝน(%)",
+                  "Google ฟ้าคะนอง(%)", "Google ลมกระโชก(กม./ชม.)",
+                  "โมเดลหลัก ฝนรวม(มม.)", "โมเดลหลัก ฝนสูงสุด(มม./ชม.)", "โมเดลหลัก โอกาสฝน(%)",
+                  "เรดาร์คลุมวงแคบ(%)", "เรดาร์คลุมวงกว้าง(%)"]
+
+
+def google_log(forecast, radar):
+    """
+    จดค่าของ Google เทียบกับโมเดลหลักและเรดาร์ ทุกรอบที่รัน → google_compare.csv
+    ใช้ analyze_google.py วัดว่า Google แม่นกว่าไหมเมื่อเทียบเรดาร์จริง
+    ค่าสรุปรวมของชั่วโมงที่มีทั้งสองฝั่ง (ขอบเขตเดียวกับ radar_watch.csv)
+    """
+    f = [x for x in (forecast or []) if x.get("google")]
+    if not f:
+        return
+    try:
+        import csv, os as _os
+        det = (radar or {}).get("rain_detected") or {}
+        g = [x["google"] for x in f]
+        new = not _os.path.exists(GOOGLE_LOG)
+        with open(GOOGLE_LOG, "a", newline="", encoding="utf-8-sig") as fp:
+            w = csv.writer(fp)
+            if new:
+                w.writerow(GOOGLE_COLUMNS)
+            w.writerow([
+                f"{now_th():%Y-%m-%d %H:%M}",
+                f"{sum(e['mm'] for e in g):.1f}", f"{max(e['mm'] for e in g):.1f}",
+                f"{max(e['prob'] for e in g):.0f}", f"{max(e['thunder'] for e in g):.0f}",
+                f"{max(e['gust'] for e in g):.0f}",
+                f"{sum(x['rain_mm'] for x in f):.1f}", f"{max(x['rain_mm'] for x in f):.1f}",
+                f"{max(x['prob'] for x in f):.0f}",
+                f"{det.get('cover_over', 0) * 100:.0f}" if det else "",
+                f"{det.get('cover_near', 0) * 100:.0f}" if det else "",
+            ])
+    except Exception as e:
+        print(f"  จด google_compare ไม่ได้: {e}")
+
+
 def tmd_pressure_trend(tmd):
     """
     เช็คแนวโน้มความกดอากาศ (slp) จากข้อมูล TMD ในช่วงที่ดึงมา
@@ -1273,7 +1460,7 @@ def retry(fn, label, tries=3, gap_sec=30):
     return out
 
 
-def build_daily_summary(day, tmd_warning=None):
+def build_daily_summary(day, tmd_warning=None, google=None):
     """ประกอบข้อความสรุปอากาศประจำวัน — คืน str"""
     # ตัดชั่วโมงที่ผ่านไปแล้วออกก่อนทุกอย่าง
     # ไม่งั้นสรุปตอน 07:00 จะรายงานฝนที่ตกไปแล้วตอนตี 2 ว่ากำลังจะมา
@@ -1342,6 +1529,30 @@ def build_daily_summary(day, tmd_warning=None):
     else:
         L.append(f"🌧️ ฝน: ไม่มีสัญญาณฝน (โอกาสสูงสุด {prob_left:.0f}%)")
 
+    # --- Google WeatherNext 3 เทียบกับโมเดลหลัก (แสดงเทียบเท่านั้น) ---
+    if google:
+        g_hours = []
+        for h in day["hours"]:
+            e = google.get(h["time"].strftime("%Y-%m-%dT%H"))
+            if e is not None:
+                g_hours.append({"time": h["time"], "rain": e["mm"], "prob": e["prob"]})
+        if g_hours:
+            gw = rain_windows(g_hours)
+            if gw:
+                gparts = []
+                for w in gw[:3]:
+                    a, b = w[0]["time"], w[-1]["time"] + timedelta(hours=1)
+                    gparts.append(f"{a:%H:%M}–{b:%H:%M} ({sum(x['rain'] for x in w):.1f} มม. · "
+                                  f"โอกาส {max(x['prob'] for x in w):.0f}%)")
+                gtxt = " และ ".join(gparts)
+            else:
+                gtxt = "ไม่เห็นช่วงฝน"
+            if bool(wins) == bool(gw):
+                agree = "ตรงกับโมเดลหลัก ✓"
+            else:
+                agree = "⚖️ เห็นต่างจากโมเดลหลัก — ระวังไว้ทั้งสองทาง"
+            L.append(f"🛰️ Google WeatherNext 3: {gtxt} · {agree}")
+
     # --- ลม ---
     wind = f"💨 ลม {day['wind']:.0f} กม./ชม."
     wc = wind_compass(day["wind_dir"])
@@ -1393,7 +1604,8 @@ def build_daily_summary(day, tmd_warning=None):
         tips.append("สภาพอากาศเอื้อต่อการทำงานกลางแจ้ง ไม่มีข้อควรระวังพิเศษ")
     L.append("\n📋 <b>สำหรับงานวันนี้</b>\n" + "\n".join(f"• {t}" for t in tips))
 
-    L.append("\n<i>ที่มา: Open-Meteo / กรมอุตุนิยมวิทยา</i>")
+    L.append("\n<i>ที่มา: Open-Meteo / กรมอุตุนิยมวิทยา"
+             + (" / Google WeatherNext 3" if google else "") + "</i>")
     return "\n".join(L)
 
 
@@ -1557,12 +1769,23 @@ def build_message(forecast, radar, warning, always_send=False, tide_clash=None,
             if clouds and max(clouds) >= TMD_CLOUD_DENSE:
                 cloud_txt = f"\n☁️ เมฆระดับต่ำหนาแน่น {max(clouds):.0f}% (TMD) — เสริมความมั่นใจว่าฝนจะตกจริง"
 
+            google_txt = google_alert_text(rain_hours)
             lines.append(f"{head} ที่{PLACE_NAME}\nช่วงเวลา: {slots}\n"
-                         f"โอกาสฝน {max_prob:.0f}% · {agree_txt} · {conf}{tmd_txt}{cloud_txt}")
+                         f"โอกาสฝน {max_prob:.0f}% · {agree_txt} · {conf}{tmd_txt}{google_txt}{cloud_txt}")
 
         elif vetoed:
             # ไม่เตือน แต่พิมพ์ลง log ให้เห็นว่าระบบยับยั้งไป
             print("  → เรดาร์ยับยั้งการเตือนฝนเบา (โมเดลว่ามี แต่เรดาร์ไม่เห็น)")
+
+        # Google เห็นฝนแต่ระบบหลักยังไม่เตือนฝน → แจ้งเป็นข้อมูลประกอบ (ไม่ทำให้เกิดการเตือน)
+        if not rain_hours:
+            g_rain = [f for f in forecast
+                      if f.get("google") and google_sees(f["google"]) == "rain"]
+            if g_rain:
+                gb = max(g_rain, key=lambda f: f["google"]["mm"])
+                info.append(f"🛰️ Google WeatherNext 3 เห็นฝน {gb['google']['mm']:.1f} มม. "
+                            f"(โอกาส {gb['google']['prob']:.0f}%) ช่วง {gb['time']:%H:%M} "
+                            f"แต่โมเดลหลักยังไม่ถึงเกณฑ์เตือน — เฝ้าระวังไว้")
 
         # --- รหัสสภาพอากาศจาก TMD (cond) — ฝนฟ้าคะนอง/ฝนหนัก ระบุชัดจากโมเดลไทยโดยตรง ---
         cond_hours = [f for f in forecast if f.get("tmd", {}).get("cond") in (7, 8)]
@@ -1723,7 +1946,8 @@ def main():
         if not day:
             print("  ดึงข้อมูลไม่ได้ ไม่ส่ง")
             sys.exit(1)
-        text = build_daily_summary(day, fetch_tmd_warning())
+        g_day = fetch_google_hourly() if USE_GOOGLE else None
+        text = build_daily_summary(day, fetch_tmd_warning(), google=g_day)
         print("--- ข้อความ ---")
         print(text)
         sys.exit(0 if retry(lambda: send_telegram(text), "ส่ง Telegram") else 1)
@@ -1753,6 +1977,10 @@ def run_once(force=False):
         forecast = merge_tmd(forecast, tmd_raw)
     elif not USE_TMD:
         print("  (ยังไม่ได้ตั้ง TMD_TOKEN — ใช้เฉพาะโมเดลโลก)")
+
+    # Google WeatherNext 3 — แนบไว้เทียบ/จดบันทึกเท่านั้น ไม่กระทบเกณฑ์เตือน (ดู merge_google)
+    if forecast and USE_GOOGLE:
+        forecast = merge_google(forecast, fetch_google_hourly())
 
     slp_delta, slp_span = tmd_pressure_trend(tmd_raw)
     if slp_delta is not None:
@@ -1789,6 +2017,8 @@ def run_once(force=False):
                   + (f" อีก ~{eta} นาที" if eta is not None else ""))
     else:
         print("  เรดาร์: ดึงไม่ได้")
+
+    google_log(forecast, radar)
 
     warning = fetch_tmd_warning()
     print(f"  ประกาศเตือนภัย: {'พบ' if warning else 'ไม่พบ'}")

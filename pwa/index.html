@@ -45,6 +45,19 @@
   button:hover{background:var(--blue-dark);}
   button.ghost{background:#fff;color:#374151;border:1px solid var(--line);}
   button.ghost:hover{border-color:#b9c3d1;background:#f8fafc;}
+  .cmpTbl{width:100%;border-collapse:collapse;font-size:12.5px;margin:2px 0 8px;}
+  .cmpTbl th{font-weight:500;color:var(--muted);text-align:right;padding:5px 6px;border-bottom:1px solid var(--line);font-size:11.5px;}
+  .cmpTbl th:first-child,.cmpTbl td:first-child{text-align:left;}
+  .cmpTbl td{padding:7px 6px;text-align:right;border-bottom:1px solid var(--line);font-variant-numeric:tabular-nums;}
+  .cmpTbl tr:last-child td{border-bottom:0;}
+  .cmpTbl td:first-child{font-weight:600;}
+  .cmpTbl td small{display:block;font-weight:400;color:var(--muted);font-size:10.5px;}
+  .cmpHours{display:grid;grid-template-columns:repeat(6,1fr);gap:4px;margin:6px 0 2px;}
+  .cmpHours div{background:var(--bg,#f3f5f9);border-radius:8px;padding:5px 2px;text-align:center;font-size:11px;line-height:1.5;}
+  .cmpHours b{display:block;font-size:11px;color:var(--muted);font-weight:500;}
+  .cmpSum{font-size:13px;line-height:1.55;margin-top:8px;padding:8px 10px;border-radius:9px;background:#eef6ff;}
+  .cmpSum.diff{background:#fff4e5;}
+  .sat-time{font-size:11px;color:var(--muted);padding:4px 12px 0;}
   .geo-msg{font-size:11.5px;color:var(--muted);margin-top:9px;line-height:1.55;}
   .geo-msg.err{color:#b45309;}
   #searchResults{margin-top:9px;display:flex;gap:6px;flex-wrap:wrap;}
@@ -227,6 +240,14 @@
   </div>
   <div id="verdict">กำลังดึงข้อมูลพยากรณ์…</div>
 
+  <!-- ============ เทียบแหล่งพยากรณ์ (แสดงเมื่อมี config.js ที่ใส่ key ของ Google) ============ -->
+  <div class="panel" id="cmpPanel" style="display:none">
+    <h3>เทียบแหล่งพยากรณ์ 3 ชม.ข้างหน้า</h3>
+    <div class="hint">Google WeatherNext 3 (AI ของ Google DeepMind ละเอียด ~5 กม. อัปเดตทุกชั่วโมง) เทียบกับโมเดลที่ใช้ตัดสินอยู่
+      และเรดาร์จริง — <b>ยังแสดงเทียบเท่านั้น ไม่ได้ใช้ตัดสิน</b> จนกว่าจะวัดความแม่นเทียบเรดาร์ได้</div>
+    <div id="cmpBody">กำลังโหลด…</div>
+  </div>
+
   <!-- ============ กราฟฝน ============ -->
   <div class="panel">
     <h3>ปริมาณฝนรายชั่วโมง 24 ชม.ข้างหน้า</h3>
@@ -308,8 +329,9 @@
         <p><b>ดูยอดเมฆว่าสูงแค่ไหน</b> สีขาวจัด/สีสด = ยอดเมฆเย็นมาก = เมฆฝนฟ้าคะนองกำลังก่อตัวแรง
            เห็นล่วงหน้าก่อนเรดาร์จับฝนได้ 1-3 ชม. · ใช้ได้ทั้งกลางวัน-กลางคืน</p>
       </div>
-      <img id="img-ir" src="http://www.sattmet.tmd.go.th/satmet/thai/ir/ir_thai.jpg" alt="ภาพดาวเทียม IR">
-      <div class="card-footer"><a href="http://www.sattmet.tmd.go.th/satmet/thai/loop/ir/gifir_se.html" target="_blank">ดูแบบ Loop →</a></div>
+      <img id="img-ir" alt="ภาพดาวเทียม IR (Himawari-9)">
+      <div class="sat-time" id="t-ir"></div>
+      <div class="card-footer"><a href="http://www.sattmet.tmd.go.th/satmet/thai/loop/enh/loop_viewer.html" target="_blank">ดูแบบ Loop →</a></div>
     </div>
     <div class="card">
       <div class="card-header">
@@ -317,7 +339,8 @@
         <p><b>เห็นเมฆเหมือนตาเปล่าจากอวกาศ</b> ดูเมฆคิวมูลัสก่อตัวช่วงสาย-บ่าย ซึ่งเป็นสัญญาณฝนตอนเย็น
            · <b>ใช้ได้เฉพาะกลางวัน</b></p>
       </div>
-      <img id="img-vis" src="http://www.sattmet.tmd.go.th/satmet/thai/vis/vis_thai.jpg" alt="ภาพดาวเทียม VIS">
+      <img id="img-vis" alt="ภาพดาวเทียม VIS (Himawari-9)">
+      <div class="sat-time" id="t-vis"></div>
       <div class="card-footer"><a href="http://www.sattmet.tmd.go.th/satmet/thai/loop/vis/gifvis_se.html" target="_blank">ดูแบบ Loop →</a></div>
     </div>
     <div class="card">
@@ -326,7 +349,8 @@
         <p><b>ความชื้นชั้นกลาง-บนของบรรยากาศ</b> พื้นที่สว่าง = ชื้น ฝนเกิดง่าย · มืด = แห้ง
            ใช้ดูตอนเช้าว่าวันนี้บรรยากาศพร้อมมีฝนแค่ไหน</p>
       </div>
-      <img id="img-wv" src="http://www.sattmet.tmd.go.th/satmet/thai/wv/wv_thai.jpg" alt="ภาพดาวเทียม WV">
+      <img id="img-wv" alt="ภาพดาวเทียม WV (Himawari-9)">
+      <div class="sat-time" id="t-wv"></div>
       <div class="card-footer"><a href="http://www.sattmet.tmd.go.th/satmet/" target="_blank">เปิดหน้ารวมภาพดาวเทียม →</a></div>
     </div>
   </div>
@@ -339,17 +363,20 @@
     <b>หมายเหตุ</b><br>
     • ตัวเลข กราฟ และแผนที่พยากรณ์ คำนวณจากพิกัดที่เลือกโดยตรง (Open-Meteo — โมเดล ECMWF/GFS) เปลี่ยนตำแหน่งแล้วอัปเดตทันที<br>
     • คำตัดสิน 3 ชม.ข้างหน้าใช้โมเดล<b>ร่วมกับเรดาร์จริง</b> (RainViewer วงแคบ 6 กม. / วงกว้าง 25 กม. เกณฑ์เดียวกับบอท Telegram) ทดสอบย้อนหลัง 3 ส.ค.-27 ก.ย. 2569 ที่บางปะกง: จับฝนได้ 96% (เดิม 81%) · บอก ✅ ไม่มีฝน แล้วถูก 80% (เดิม 65%) · ถ้าอ่านเรดาร์ไม่ได้หรือพิกัดอยู่นอกเขตเรดาร์ จะตัดสินจากโมเดลอย่างเดียวเหมือนเดิม<br>
+    • การ์ด "เทียบแหล่งพยากรณ์" (ถ้าขึ้น) แสดง Google WeatherNext 3 เทียบกับโมเดลและเรดาร์เพื่อดูว่าตรงกันไหม <b>ยังไม่ได้นำมาตัดสินคำเตือน</b> เพราะยังไม่มีข้อมูลย้อนหลังพิสูจน์ว่าแม่นกว่าที่ไซต์นี้ — กำลังเก็บข้อมูลวัดผล<br>
     • แผนที่พยากรณ์เป็นค่าจากโมเดล ความละเอียดประมาณ 15-25 กม./ช่อง จึงเห็นเป็นภาพรวม ไม่ละเอียดเท่าเรดาร์จริง — ใช้ดูทิศทางและช่วงเวลาที่ฝนจะมา<br>
     • เรดาร์จริง (RainViewer) ซ้อนได้จากช่องติ๊ก แต่ผู้ให้บริการเปิดให้ใช้ฟรีถึงระดับซูม 7 ภาพจึงเบลอเมื่อซูมเข้าใกล้ และมีเฉพาะข้อมูลปัจจุบัน<br>
-    • ภาพดาวเทียมเป็น http ถ้าไม่ขึ้น ให้กดไอคอนข้าง URL แล้วอนุญาต "เนื้อหาที่ไม่ปลอดภัย" หรือกดลิงก์เปิดหน้าเต็ม<br>
+    • ภาพดาวเทียมมาจาก Himawari-9 (JMA ญี่ปุ่น) ซึ่งเป็นดาวเทียมดวงเดียวกับที่กรมอุตุฯ ใช้ · ภาพล่าช้าจากเวลาจริงราว 15-25 นาที<br>
     • การ์ดเรดาร์ TMD จะเรียงตามระยะจากตำแหน่งที่เลือกให้อัตโนมัติ
   </div>
 
 </main>
 
-<footer>ข้อมูลจาก กรมอุตุนิยมวิทยา · Open-Meteo · RainViewer · OpenStreetMap</footer>
+<footer>ข้อมูลจาก กรมอุตุนิยมวิทยา · Open-Meteo · RainViewer · Google WeatherNext 3 · JMA Himawari-9 · OpenStreetMap</footer>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<!-- config.js ไม่อยู่ใน git (ดู config.example.js) — ไม่มีไฟล์/ไม่ใส่ key = ซ่อนส่วน Google ที่เหลือทำงานปกติ -->
+<script src="config.js" onerror="void 0"></script>
 <script>
 /* =====================================================================
    1) ข้อมูลคงที่
@@ -377,7 +404,7 @@ const RADARS = [
    desc:'ครอบคลุมภาคตะวันออกตอนล่าง ระยอง จันทบุรี ชลบุรีตะวันออก'},
   {id:'skm', name:'สมุทรสงคราม (240 กม.)', lat:13.41, lon:100.00,
    img:'https://weather.tmd.go.th/skm/skm240_latest.jpg',
-   loop:'https://weather.tmd.go.th/skmLoop.php', tz:'UTC',
+   loop:'https://weather.tmd.go.th/skm240loop.php', tz:'UTC',
    desc:'ครอบคลุมอ่าวไทยตอนบนฝั่งตะวันตก เพชรบุรี ราชบุรี'}
 ];
 
@@ -725,7 +752,7 @@ async function loadTide(){
     note.innerHTML = '⚠️ <b>ค่านี้เป็นค่าจากแบบจำลอง ไม่ใช่ตารางน้ำอย่างเป็นทางการ</b> '
       + 'ความละเอียด ~8 กม. ผู้ให้บริการระบุว่าความแม่นยำในเขตชายฝั่งและปากแม่น้ำมีข้อจำกัด '
       + 'ใช้ดูแนวโน้มได้ แต่ถ้าต้องใช้ตัวเลขจริงให้อ้างอิงตารางน้ำของกรมอุทกศาสตร์ '
-      + '(<a href="http://www.hydro.navy.mi.th/ServicesSun_Moon.php" target="_blank">hydro.navy.mi.th</a>) '
+      + '(<a href="https://www.hydro.navy.mi.th/servicestide2026.html" target="_blank">hydro.navy.mi.th</a>) '
       + 'ระดับอ้างอิงเป็นระดับน้ำทะเลปานกลางโลก ไม่ใช่ระดับน้ำลงต่ำสุด';
 
     checkTideRainClash();
@@ -949,6 +976,7 @@ async function loadRadarNowcast(){
   }
   renderRadarStat();
   renderVerdict();
+  renderCompare();
 }
 
 /* --- โหลดกริดพยากรณ์ฝนรอบตำแหน่ง --- */
@@ -1101,6 +1129,119 @@ function renderLinks(){
       <div class="title">${t}</div>
       <div class="desc">${d}</div>
     </a>`).join('');
+}
+
+/* =====================================================================
+   Google WeatherNext 3 (Google Maps Platform Weather API) — แสดงเทียบ ไม่ใช้ตัดสิน
+   key มาจาก config.js (ไม่อยู่ใน git) — key ฝั่งเบราว์เซอร์ใครเปิดดูซอร์สก็เห็นอยู่แล้ว
+   จึงต้องล็อกที่ Google Cloud: จำกัดเฉพาะ Weather API + HTTP referrer ของเว็บนี้ + ตั้งเพดานโควตา/วัน
+   ===================================================================== */
+const GOOGLE_KEY = String(window.GOOGLE_WEATHER_KEY || '').trim();
+const GOOGLE_CACHE_MS = 20*60*1000;      // โมเดลอัปเดตชั่วโมงละครั้ง — ไม่ต้องยิงทุกครั้งที่รีเฟรช
+let googleNow = null;                    // {ok, lat, lon, at, hours:{'YYYY-MM-DDTHH':{mm,prob,thunder,gust}}} | {ok:false,...}
+let googleToken = 0;
+
+function googleHere(){
+  const G = googleNow;
+  return (G && G.ok && G.lat === LOC.lat && G.lon === LOC.lon) ? G : null;
+}
+function gNum(o, ...path){
+  for(const k of path){ if(o == null || typeof o !== 'object') return null; o = o[k]; }
+  return (typeof o === 'number' && isFinite(o)) ? o : null;
+}
+async function loadGoogle(){
+  if(!GOOGLE_KEY){ renderCompare(); return; }
+  const G = googleHere();
+  if(G && Date.now() - G.at < GOOGLE_CACHE_MS){ renderCompare(); return; }
+  const my = ++googleToken, lat = LOC.lat, lon = LOC.lon;
+  try{
+    const url = 'https://weather.googleapis.com/v1/forecast/hours:lookup'
+      + `?key=${encodeURIComponent(GOOGLE_KEY)}&location.latitude=${lat}&location.longitude=${lon}`
+      + '&hours=24&pageSize=24&unitsSystem=METRIC';
+    const r = await fetch(url);
+    if(!r.ok) throw new Error('HTTP ' + r.status);
+    const d = await r.json();
+    if(my !== googleToken) return;                  // ผู้ใช้ย้ายตำแหน่งไปแล้ว ทิ้งผลนี้
+    const hours = {};
+    for(const h of (d.forecastHours || [])){
+      const st = h.interval && h.interval.startTime;
+      const ms = st ? Date.parse(st) : NaN;
+      if(isNaN(ms)) continue;
+      const key = new Date(ms + 7*3600*1000).toISOString().slice(0,13);   // UTC → เวลาไทย
+      hours[key] = {
+        mm: gNum(h,'precipitation','qpf','quantity') || 0,
+        prob: gNum(h,'precipitation','probability','percent') || 0,
+        thunder: gNum(h,'thunderstormProbability') || 0,
+        gust: gNum(h,'wind','gust','value') || 0
+      };
+    }
+    if(!Object.keys(hours).length) throw new Error('ไม่มีข้อมูลรายชั่วโมงที่จุดนี้');
+    googleNow = {ok:true, lat, lon, at:Date.now(), hours};
+  }catch(e){
+    if(my !== googleToken) return;
+    googleNow = {ok:false, lat, lon, at:Date.now(), err:e.message};
+  }
+  renderCompare();
+}
+
+function renderCompare(){
+  const box = document.getElementById('cmpPanel');
+  if(!box) return;
+  if(!GOOGLE_KEY){ box.style.display = 'none'; return; }
+  box.style.display = '';
+  const body = document.getElementById('cmpBody');
+  if(!lastModel){ body.textContent = 'กำลังโหลดพยากรณ์…'; return; }
+  const G = googleHere();
+  if(!G){
+    const failed = googleNow && !googleNow.ok && googleNow.lat === LOC.lat && googleNow.lon === LOC.lon;
+    body.innerHTML = failed
+      ? `⚠️ ดึงข้อมูล Google ไม่ได้ (${googleNow.err}) — ใช้โมเดลปัจจุบัน + เรดาร์ตามปกติ`
+      : 'กำลังโหลดข้อมูล Google…';
+    return;
+  }
+  const M = lastModel, R = radarForHere();
+  const h3 = M.hrs6.slice(0,3);
+  const gs = h3.map(h => G.hours[h.key]).filter(Boolean);
+  if(!gs.length){ body.textContent = 'Google ไม่มีข้อมูลช่วงเวลานี้ที่จุดนี้'; return; }
+  const gSum = gs.reduce((a,e)=>a+e.mm,0);
+  const gP = Math.max(...gs.map(e=>e.prob));
+  const gTh = Math.max(...gs.map(e=>e.thunder));
+  const gG = Math.max(...gs.map(e=>e.gust));
+  const mG = Math.max(...h3.map(h=>h.g));
+
+  const gRain = gSum > 0.2 || gP >= 60;           // เกณฑ์เดียวกับที่คำตัดสินใช้กับโมเดล (modelRain)
+  const mRain = M.rain3 > 0.2 || M.maxP3 >= 60;
+  const rRain = !!(R && (R.over || R.near || (R.eta != null && R.eta <= RADAR_ETA_WARN)));
+
+  const rowRadar = R
+    ? `<tr><td>เรดาร์จริง<small>ภาพ ${pad2(R.time.getHours())}:${pad2(R.time.getMinutes())} น.</small></td>
+         <td colspan="3" style="text-align:right">เหนือจุด ${Math.round(R.coverOver*100)}% · รัศมี 25 กม. ${Math.round(R.coverNear*100)}%${R.eta!=null?` · ถึงใน ~${R.eta} นาที`:''}</td></tr>`
+    : `<tr><td>เรดาร์จริง</td><td colspan="3" style="text-align:right;color:var(--muted)">${radarNow && !radarNow.ok ? 'อ่านไม่ได้' : 'กำลังอ่าน…'}</td></tr>`;
+
+  const strip = M.hrs6.map(h=>{
+    const e = G.hours[h.key];
+    return `<div><b>${h.key.slice(11)}:00</b>${h.mm.toFixed(1)}<br><span style="color:#2563eb">${e?e.mm.toFixed(1):'—'}</span></div>`;
+  }).join('');
+
+  let sum, cls = '';
+  if(gRain && mRain) sum = '✅ <b>ตรงกัน</b> — ทั้ง Google และโมเดลเห็นฝนใน 3 ชม.ข้างหน้า';
+  else if(!gRain && !mRain) sum = '✅ <b>ตรงกัน</b> — ทั้ง Google และโมเดลไม่เห็นฝนใน 3 ชม.ข้างหน้า';
+  else{
+    cls = 'diff';
+    sum = `⚖️ <b>เห็นต่างกัน</b> — ${gRain ? 'Google เห็นฝน แต่โมเดลไม่เห็น' : 'โมเดลเห็นฝน แต่ Google ไม่เห็น'}`;
+    if(R) sum += ` · เรดาร์ตอนนี้${rRain ? 'เห็นฝนใกล้ ๆ' : 'ยังไม่เห็นฝนใกล้ ๆ'}`;
+    sum += ' — ถ้าต้องตัดสินใจเรื่องสำคัญ ให้ถือตามฝั่งที่ระวังกว่า';
+  }
+
+  body.innerHTML = `<table class="cmpTbl">
+      <tr><th></th><th>ฝนรวม 3 ชม.</th><th>โอกาสฝนสูงสุด</th><th>ลมกระโชก</th></tr>
+      <tr><td>โมเดลที่ใช้ตัดสิน<small>Open-Meteo</small></td><td>${M.rain3.toFixed(1)} มม.</td><td>${M.maxP3.toFixed(0)}%</td><td>${mG.toFixed(0)} กม./ชม.</td></tr>
+      <tr><td>Google WeatherNext 3<small>ฟ้าคะนอง ${gTh.toFixed(0)}%</small></td><td>${gSum.toFixed(1)} มม.</td><td>${gP.toFixed(0)}%</td><td>${gG.toFixed(0)} กม./ชม.</td></tr>
+      ${rowRadar}
+    </table>
+    <div style="font-size:11px;color:var(--muted)">รายชั่วโมง (มม.) · บน = โมเดลที่ใช้ตัดสิน · ล่าง <span style="color:#2563eb">ฟ้า = Google</span></div>
+    <div class="cmpHours">${strip}</div>
+    <div class="cmpSum ${cls}">${sum}</div>`;
 }
 
 /* =====================================================================
@@ -1261,9 +1402,15 @@ function render(d){
     </div>
     <div class="stat" id="radarStat"></div>`;
 
-  lastModel = {rain3, maxP3, maxG};
+  /* ช่วง 3 ชม. และ 6 ชม.แรก ใช้คีย์เวลาท้องถิ่นไทย (Open-Meteo ส่งมาเป็น Asia/Bangkok อยู่แล้ว)
+     เอาไว้จับคู่กับ Google ให้ตรงชั่วโมงเดียวกัน */
+  const hrs6 = [];
+  for(let i=idx;i<Math.min(idx+6,H.time.length);i++)
+    hrs6.push({key:H.time[i].slice(0,13), mm:H.precipitation[i]||0, p:H.precipitation_probability[i]||0, g:H.wind_gusts_10m[i]||0});
+  lastModel = {rain3, maxP3, maxG, hrs6};
   renderRadarStat();
   renderVerdict();
+  renderCompare();
 
   const bars=[], maxRain=Math.max(1,...H.precipitation.slice(idx,idx+24).map(x=>x||0));
   for(let i=idx;i<Math.min(idx+24,H.time.length);i++){
@@ -1310,12 +1457,43 @@ document.querySelectorAll('.tab').forEach(t=>{
   });
 });
 
+/* ภาพดาวเทียม Himawari-9 จาก JMA (https, ครอบคลุมอินโดจีน) — เดิมใช้ภาพของ TMD ที่เป็น http อย่างเดียว
+   เว็บนี้เป็น https เบราว์เซอร์จึงบล็อก ภาพไม่ขึ้น
+   ไฟล์ตั้งชื่อตามช่วง 10 นาที (UTC) แล้ววนเขียนทับทุก 24 ชม. → ถ้าขอเร็วเกินจะได้ภาพ "เมื่อวาน" แทนที่จะ 404
+   แต่ละช่วงเสร็จช้ากว่าชื่อ ~13 นาที จึงเริ่มที่ (ตอนนี้ − 15 นาที) ปัดลงเป็นช่วง 10 นาที */
+const HIMAWARI_BASE = 'https://www.data.jma.go.jp/mscweb/data/himawari/img/se1/se1_';
+const HIMAWARI_LAG_MIN = 15;
+function himawariSlot(backSteps){
+  const t = new Date(Math.floor((Date.now() - HIMAWARI_LAG_MIN*60000)/600000)*600000 - backSteps*600000);
+  const hhmm = String(t.getUTCHours()).padStart(2,'0') + String(t.getUTCMinutes()).padStart(2,'0');
+  return {hhmm, t};
+}
+function loadHimawari(imgId, band, tId){
+  const el=document.getElementById(imgId), tEl=document.getElementById(tId);
+  if(!el) return;
+  let step=0;
+  const MAX_BACK=6;
+  const tryLoad=()=>{
+    const {hhmm,t}=himawariSlot(step);
+    const probe=new Image();
+    probe.onload=()=>{
+      el.src=probe.src;
+      // เวลาที่ติดบนภาพ = ชื่อช่วง + 10 นาที (เวลาที่ดาวเทียมสแกนจริง) · บังคับเขตเวลาไทยไม่ว่าเครื่องตั้งไว้ที่ไหน
+      const obs=new Date(t.getTime()+10*60000);
+      if(tEl) tEl.textContent='ภาพ '+obs.toLocaleTimeString('th-TH',{hour:'2-digit',minute:'2-digit',timeZone:'Asia/Bangkok'})+' น. (Himawari-9 · JMA)';
+    };
+    probe.onerror=()=>{
+      if(++step<=MAX_BACK) tryLoad();
+      else if(tEl) tEl.textContent='โหลดภาพไม่สำเร็จ — กด "เปิดหน้ารวมภาพดาวเทียม" ด้านล่างแทน';
+    };
+    probe.src=HIMAWARI_BASE+band+'_'+hhmm+'.jpg';
+  };
+  tryLoad();
+}
 function refreshSatellite(){
-  const ts=Date.now();
-  [['img-ir','http://www.sattmet.tmd.go.th/satmet/thai/ir/ir_thai.jpg'],
-   ['img-vis','http://www.sattmet.tmd.go.th/satmet/thai/vis/vis_thai.jpg'],
-   ['img-wv','http://www.sattmet.tmd.go.th/satmet/thai/wv/wv_thai.jpg']]
-  .forEach(([id,u])=>{ const el=document.getElementById(id); if(el) el.src=u+'?v='+ts; });
+  loadHimawari('img-ir','b13','t-ir');
+  loadHimawari('img-vis','b03','t-vis');
+  loadHimawari('img-wv','b08','t-wv');
 }
 
 /* กริด 81 จุด = ค่าใช้โควตาสูงสุดในแอป จึงโหลดห่างกว่าอย่างอื่นมาก */
@@ -1325,6 +1503,7 @@ const GRID_MIN_INTERVAL = 30*60*1000;   // อย่างน้อย 30 นา
 function refreshAll(force){
   fetchForecast();
   loadRadarNowcast();
+  loadGoogle();
   renderRadarCards();
   renderLinks();
   refreshSatellite();

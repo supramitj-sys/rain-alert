@@ -12,7 +12,7 @@
 /* เลขเวอร์ชันนี้ต้องเลื่อนทุกครั้งที่แก้ index.html
    ไม่งั้นเบราว์เซอร์จะหยิบหน้าเก่าจาก cache มาแสดงก่อน แล้วค่อยอัปเดตรอบถัดไป
    ทำให้เห็นของใหม่ช้าไป 1 รอบ */
-const CACHE = 'checkfon-v5';
+const CACHE = 'checkfon-v6';
 
 const SHELL = [
   './',
@@ -34,6 +34,8 @@ const NEVER_CACHE = [
   'api.rainviewer.com',
   'tilecache.rainviewer.com',
   'api.bigdatacloud.net',
+  'weather.googleapis.com',          // Google WeatherNext 3 — ต้องสดเสมอ
+  'data.jma.go.jp',                  // ภาพดาวเทียม Himawari-9 — ต้องสดเสมอ
   'weather.tmd.go.th',
   'sattmet.tmd.go.th',
   'tile.openstreetmap.org'

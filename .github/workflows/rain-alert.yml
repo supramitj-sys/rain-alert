@@ -88,6 +88,7 @@ jobs:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           TMD_TOKEN: ${{ secrets.TMD_TOKEN }}
+          GOOGLE_WEATHER_KEY: ${{ secrets.GOOGLE_WEATHER_KEY }}   # ว่างได้ = ข้าม Google WeatherNext 3
           WX_LAT: '13.53'
           WX_LON: '100.99'
           WX_PLACE: 'บางปะกง'
@@ -114,7 +115,7 @@ jobs:
       - name: บันทึกประวัติการเตือนเข้า repo
         if: always()
         run: |
-          if [ ! -f alert_log.csv ] && [ ! -f radar_watch.csv ]; then
+          if [ ! -f alert_log.csv ] && [ ! -f radar_watch.csv ] && [ ! -f google_compare.csv ]; then
             echo "ไม่มีรายการใหม่ ข้ามขั้นตอนนี้"
             exit 0
           fi
@@ -129,6 +130,7 @@ jobs:
           FILES=""
           [ -f alert_log.csv ]   && FILES="$FILES alert_log.csv"
           [ -f radar_watch.csv ] && FILES="$FILES radar_watch.csv"
+          [ -f google_compare.csv ] && FILES="$FILES google_compare.csv"
           git add $FILES
 
           if git diff --staged --quiet; then

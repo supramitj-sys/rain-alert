@@ -43,6 +43,7 @@ jobs:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           TMD_TOKEN: ${{ secrets.TMD_TOKEN }}
+          GOOGLE_WEATHER_KEY: ${{ secrets.GOOGLE_WEATHER_KEY }}   # ว่างได้ = ข้าม Google WeatherNext 3
           WX_LAT: '13.53'
           WX_LON: '100.99'
           WX_PLACE: 'บางปะกง'
