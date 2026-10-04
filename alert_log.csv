@@ -2695,3 +2695,5 @@
 2026-10-04 15:56,storm,radar_soon|cape,0.3,61,0,4,0.0,no,0,10,no,
 2026-10-04 16:01,storm,radar_soon|cape,0.3,61,0,4,0.0,no,6,13,no,
 2026-10-04 16:06,storm,radar_soon|cape,0.3,61,0,4,0.0,no,6,13,no,
+2026-10-04 22:03,storm,radar_now|cape,0.0,32,0,4,0.0,yes,27,60,yes,
+2026-10-04 22:08,storm,radar_now|cape,0.0,32,0,4,0.0,yes,27,60,no,
