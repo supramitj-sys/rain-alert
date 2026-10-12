@@ -2764,3 +2764,7 @@
 2026-10-11 14:02,radar_now,radar_now,2.3,99,3,4,1.9,yes,46,12,no,
 2026-10-12 08:45,radar_soon,radar_soon|pressure,0.0,18,0,4,0.0,no,10,15,yes,
 2026-10-12 08:50,radar_soon,radar_soon|pressure,0.0,18,0,4,0.0,no,10,15,no,
+2026-10-12 15:11,radar_soon,radar_soon,0.7,73,1,4,0.0,no,0,3,yes,
+2026-10-12 15:16,radar_soon,radar_soon,0.7,73,1,4,0.0,no,0,3,no,
+2026-10-12 15:21,radar_soon,radar_soon,0.7,73,1,4,0.0,no,0,3,no,
+2026-10-12 15:26,radar_soon,radar_soon,0.7,73,1,4,0.0,no,0,3,no,
