@@ -2818,3 +2818,7 @@
 2026-10-16 11:51,heat,heat|pressure,0.6,66,1,4,0.0,no,0,0,no,
 2026-10-16 11:56,heat,heat|pressure,0.6,66,1,4,0.0,no,0,0,no,
 2026-10-16 12:01,storm,cape|heat|pressure,1.8,84,2,4,0.7,no,0,0,yes,
+2026-10-16 16:23,radar_soon,radar_soon|rain,2.1,100,2,4,0.3,no,0,2,yes,
+2026-10-16 16:28,radar_soon,radar_soon|rain,2.1,100,2,4,0.3,no,0,2,no,
+2026-10-16 16:44,rain,rain,2.1,100,2,4,0.0,no,0,2,no,
+2026-10-16 16:49,rain,rain,2.1,100,2,4,0.0,no,0,2,no,
