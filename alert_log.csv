@@ -3031,3 +3031,5 @@
 2026-10-31 22:21,storm,radar_now|cape|pressure,0.0,61,0,4,0.0,yes,96,63,no,
 2026-10-31 22:26,storm,radar_now|cape|pressure,0.0,61,0,4,0.0,yes,96,63,no,
 2026-10-31 22:31,storm,radar_now|cape|pressure,0.0,61,0,4,0.0,yes,91,62,no,
+2026-11-01 02:02,storm,radar_now|cape,0.4,84,0,4,0.5,yes,37,32,yes,
+2026-11-01 02:07,storm,radar_now|cape,0.4,84,0,4,0.5,yes,37,32,no,
