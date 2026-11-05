@@ -3063,3 +3063,7 @@
 2026-11-04 10:10,radar_now,radar_now|heat|pressure,0.8,84,0,4,0.0,yes,58,23,no,
 2026-11-04 10:15,radar_now,radar_now|heat|pressure,0.8,84,0,4,0.0,yes,58,23,no,
 2026-11-04 10:21,radar_now,radar_now|heat|pressure,0.8,84,0,4,0.0,yes,52,23,no,
+2026-11-05 19:03,storm,radar_now|cape,0.1,57,0,4,0.0,yes,30,46,yes,
+2026-11-05 19:08,storm,radar_now|cape,0.1,57,0,4,0.0,yes,30,46,no,
+2026-11-05 19:13,storm,radar_now|cape,0.1,57,0,4,0.0,yes,80,55,no,
+2026-11-05 19:18,storm,radar_now|cape,0.1,57,0,4,0.0,yes,80,55,no,
